@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -76,6 +76,41 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # Vault (Phase 3 read path)
+    # ------------------------------------------------------------------
+    vault_enabled: bool = Field(
+        default=False,
+        description=(
+            "If True, read tools use the phish-vault Postgres database instead of "
+            "the live API. Hot-window shows always read live regardless of this flag."
+        ),
+    )
+    vault_hot_window_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Shows newer than this many hours are always read from the live API.",
+    )
+    vault_max_stale_hours: int = Field(
+        default=36,
+        ge=1,
+        description=(
+            "Refuse to serve vault data if the last successful ETL run is older "
+            "than this many hours. Health reports 'degraded'."
+        ),
+    )
+    pg_host: str = Field(default="postgres")
+    pg_port: int = Field(default=5432, ge=1, le=65535)
+    pg_db: str = Field(default="phish")
+    pg_user: str = Field(default="phish")
+    pg_password: SecretStr = Field(default=SecretStr(""))
+
+    @property
+    def pg_dsn(self) -> str:
+        """Build a PostgreSQL DSN from vault connection settings."""
+        pw = self.pg_password.get_secret_value()
+        return f"postgresql://{self.pg_user}:{pw}@{self.pg_host}:{self.pg_port}/{self.pg_db}"
+
+    # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
 
@@ -104,6 +139,11 @@ class Settings(BaseSettings):
             "mcp_port": self.mcp_port,
             "log_level": self.log_level,
             "log_format": self.log_format,
+            "vault_enabled": self.vault_enabled,
+            "pg_host": self.pg_host,
+            "pg_port": self.pg_port,
+            "pg_db": self.pg_db,
+            # pg_password intentionally omitted
         }
 
 

@@ -1,5 +1,9 @@
 # Example docker-compose for self-build (not the GHCR image).
 # Copy to docker-compose.yml and tweak as needed.
+#
+# Phase 3 (vault read path): also run the phish-vault stack and uncomment
+# the two `networks:` blocks below so this container can resolve `postgres`
+# by name. Leave them commented to keep the Phase 1 live-API behavior.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -21,6 +25,9 @@ services:
       - .env
     volumes:
       - ./local-cache:/data
+    # networks:
+    #   - default
+    #   - phish-vault
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_phish.healthcheck"]
@@ -30,3 +37,8 @@ services:
       start_period: 10s
     security_opt:
       - no-new-privileges:true
+
+# networks:
+#   phish-vault:
+#     external: true
+#     name: phish-vault_default

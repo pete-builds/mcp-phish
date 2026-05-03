@@ -21,7 +21,7 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from fastmcp import FastMCP
 from pydantic import BaseModel
@@ -44,12 +44,19 @@ from mcp_phish.models import (
     ShowAudio,
     ShowSummary,
     Song,
+    SongGap,
     SongSummary,
     Track,
     UpstreamHealth,
+    VaultHealth,
     Venue,
+    VenueShow,
 )
 from mcp_phish.throttle import TokenBucket
+from mcp_phish.vault import VaultReader
+
+if TYPE_CHECKING:
+    import asyncpg
 
 logger = logging.getLogger("mcp_phish.server")
 
@@ -302,6 +309,184 @@ def _phishin_show_audio(row: dict[str, Any]) -> ShowAudio:
 
 
 # ---------------------------------------------------------------------------
+# Vault projection helpers (asyncpg.Record → frozen Pydantic models)
+#
+# These mirror the _phishnet_* and _phishin_* helpers above but read from
+# vault rows instead of upstream API dicts. The output shapes are identical.
+# ---------------------------------------------------------------------------
+
+
+def _vault_show_summary(row: Any) -> ShowSummary:
+    show_id = str(row["show_id_phishin"] or row.get("show_id_phishnet") or "")
+    return ShowSummary(
+        show_id=show_id,
+        date=str(row["date"]),
+        venue_name=_safe_str(row.get("venue_name")),
+        location=_safe_str(row.get("location")),
+        tour_name=_safe_str(row.get("tour_name")),
+    )
+
+
+def _vault_show_full(show_row: Any, setlist_rows: list[Any]) -> Show:
+    set_label_map = {"1": "Set 1", "2": "Set 2", "3": "Set 3", "e": "Encore"}
+    setlist = [
+        SetlistEntry(
+            position=_safe_int(row.get("position")),
+            set_name=set_label_map.get(
+                _safe_str(row.get("set_label")), _safe_str(row.get("set_label"))
+            ),
+            song_slug=_safe_str(row.get("song_slug")),
+            song_title=_safe_str(row.get("song_name")),
+            transition=_safe_str(row.get("transition")).strip(),
+            footnote=_safe_str(row.get("footnote")),
+        )
+        for row in setlist_rows
+    ]
+    venue = Venue(
+        slug=_safe_str(show_row.get("venue_slug")),
+        name=_safe_str(show_row.get("venue_name")),
+        city=_safe_str(show_row.get("city")),
+        state=_safe_str(show_row.get("state")),
+        country=_safe_str(show_row.get("country")),
+        location=_safe_str(show_row.get("location")),
+        latitude=_safe_float(show_row.get("latitude")),
+        longitude=_safe_float(show_row.get("longitude")),
+    )
+    show_id = str(show_row["show_id_phishin"] or show_row.get("show_id_phishnet") or "")
+    return Show(
+        show_id=show_id,
+        date=str(show_row["date"]),
+        venue=venue,
+        tour_name=_safe_str(show_row.get("tour_name")),
+        setlist=setlist,
+    )
+
+
+def _vault_song_summary(row: Any) -> SongSummary:
+    return SongSummary(
+        slug=_safe_str(row.get("slug")),
+        title=_safe_str(row.get("title")),
+        artist=row.get("artist") or None,
+        original=bool(row.get("original", True)),
+        times_played=_safe_int(row.get("times_played")),
+    )
+
+
+def _vault_song_full(row: Any) -> Song:
+    debut = row.get("debut_date")
+    last_played = row.get("last_play_date")
+    gap = row.get("gap_current")
+    return Song(
+        slug=_safe_str(row.get("slug")),
+        title=_safe_str(row.get("title")),
+        artist=row.get("artist") or None,
+        original=bool(row.get("original", True)),
+        times_played=_safe_int(row.get("times_played")),
+        debut_date=str(debut) if debut is not None else None,
+        last_played_date=str(last_played) if last_played is not None else None,
+        gap=_safe_int(gap) if gap is not None else None,
+    )
+
+
+def _vault_performance(row: Any) -> Performance:
+    show_id = str(row.get("show_id_phishin") or row.get("show_id_phishnet") or "")
+    return Performance(
+        show_id=show_id,
+        date=str(row["date"]),
+        venue_name=_safe_str(row.get("venue_name")),
+        location=_safe_str(row.get("venue_location")),
+        set_name=_safe_str(row.get("set_name")),
+        gap=_safe_int(row["gap"]) if row.get("gap") is not None else None,
+    )
+
+
+def _vault_jam(row: Any) -> NotableJam:
+    show_id = str(row.get("show_id_phishin") or row.get("show_id_phishnet") or "")
+    return NotableJam(
+        show_id=show_id,
+        date=str(row["date"]),
+        song_slug=_safe_str(row.get("song_slug")),
+        song_title=_safe_str(row.get("song_name")),
+        venue_name=_safe_str(row.get("venue_name")),
+        notes=_safe_str(row.get("notes")),
+    )
+
+
+def _vault_review(row: Any) -> Review:
+    posted = row.get("posted_at")
+    if hasattr(posted, "isoformat"):
+        posted_iso: str | None = posted.isoformat()
+    elif posted:
+        posted_iso = str(posted)
+    else:
+        posted_iso = None
+    return Review(
+        review_id=str(row.get("upstream_review_id") or row.get("id") or ""),
+        show_id="",  # vault reviews are keyed by date; show_id not always present
+        date=str(row["show_date"]),
+        author=_safe_str(row.get("username")),
+        posted_at=posted_iso,
+        rating=_safe_float(row.get("score")),
+        text=_safe_str(row.get("review_text")),
+    )
+
+
+def _vault_track(row: Any, show_id: str | None = None) -> Track:
+    sid = show_id or str(row.get("show_id_phishin") or "")
+    return Track(
+        track_id=_safe_int(row.get("id")),
+        slug=_safe_str(row.get("slug")),
+        title=_safe_str(row.get("title")),
+        show_id=sid,
+        show_date=str(row.get("show_date") or ""),
+        set_name=_safe_str(row.get("set_name")),
+        position=_safe_int(row.get("position")),
+        duration_ms=_safe_int(row.get("duration_ms")),
+        mp3_url=row.get("mp3_url"),
+        waveform_image_url=row.get("waveform_image_url"),
+        venue_name=_safe_str(row.get("venue_name")),
+        venue_location=_safe_str(row.get("venue_location")),
+    )
+
+
+def _vault_show_audio(show_row: Any, tracks: list[Any]) -> ShowAudio:
+    show_id = str(show_row.get("show_id_phishin") or "")
+    return ShowAudio(
+        show_id=show_id,
+        date=str(show_row["date"]),
+        venue_name=_safe_str(show_row.get("venue_name")),
+        venue_location=_safe_str(show_row.get("venue_location")),
+        duration_ms=_safe_int(show_row.get("duration_ms")),
+        audio_status=_safe_str(show_row.get("audio_status")),
+        album_zip_url=show_row.get("album_zip_url"),
+        cover_art_url=show_row.get("cover_art_url_large"),
+        tracks=[_vault_track(t, show_id=show_id) for t in tracks],
+    )
+
+
+def _vault_venue_show(row: Any) -> VenueShow:
+    show_id = str(row.get("show_id_phishin") or row.get("show_id_phishnet") or "")
+    return VenueShow(
+        show_id=show_id,
+        date=str(row["date"]),
+        venue_name=_safe_str(row.get("venue_name")),
+        location=_safe_str(row.get("location")),
+        tour_name=_safe_str(row.get("tour_name")),
+    )
+
+
+def _vault_song_gap(row: Any) -> SongGap:
+    last_played = row.get("last_play_date")
+    return SongGap(
+        slug=_safe_str(row.get("slug")),
+        title=_safe_str(row.get("title")),
+        times_played=_safe_int(row.get("times_played")),
+        gap_current=_safe_int(row.get("gap_current")),
+        last_played_date=str(last_played) if last_played is not None else None,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Cache key helpers
 # ---------------------------------------------------------------------------
 
@@ -327,11 +512,19 @@ def build_server(
     cache: ResponseCache | None = None,
     phishnet_throttle: TokenBucket | None = None,
     phishin_throttle: TokenBucket | None = None,
+    vault_reader: VaultReader | None = None,
+    vault_pool: asyncpg.Pool | None = None,
 ) -> FastMCP:
     """Build a fully-wired FastMCP instance.
 
-    Tests can pass in their own stubs/throttles/cache to keep behavior
-    isolated. Production calls ``main()`` which constructs the live wiring.
+    Tests can pass in their own stubs/throttles/cache/vault_reader to keep
+    behavior isolated. Production calls ``main()`` which relies on lazy-init
+    for the vault pool.
+
+    ``vault_reader`` takes precedence over ``vault_pool`` when both are given.
+    When ``vault_pool`` is given, a ``VaultReader`` is constructed from it.
+    When neither is given and ``settings.vault_enabled`` is True, the pool is
+    created lazily on the first vault read.
     """
     pn_throttle = phishnet_throttle or TokenBucket(rps=settings.throttle_phishnet_rps)
     pi_throttle = phishin_throttle or TokenBucket(rps=settings.throttle_phishin_rps)
@@ -368,6 +561,51 @@ def build_server(
         db_path=settings.cache_db_path,
         ttl_seconds=settings.cache_ttl_seconds,
     )
+
+    # --- vault reader setup ------------------------------------------------
+    # Priority: explicit vault_reader > vault_pool > lazy-init on first use
+    _vault_reader: VaultReader | None
+    if vault_reader is not None:
+        _vault_reader = vault_reader
+    elif vault_pool is not None:
+        _vault_reader = VaultReader(vault_pool)
+    else:
+        _vault_reader = None  # will be created lazily if vault_enabled
+
+    _lazy_pool_holder: list[Any] = [None]  # mutable cell for lazy pool
+
+    async def _get_vault_reader() -> VaultReader | None:
+        """Return the VaultReader, lazily initialising the pool when needed."""
+        if _vault_reader is not None:
+            return _vault_reader
+        if not settings.vault_enabled:
+            return None
+        # Lazy pool creation on first vault read.
+        if _lazy_pool_holder[0] is None:
+            try:
+                import asyncpg as _asyncpg
+
+                _lazy_pool_holder[0] = await _asyncpg.create_pool(
+                    settings.pg_dsn,
+                    min_size=1,
+                    max_size=5,
+                )
+                logger.info("vault pool created", extra={"dsn_host": settings.pg_host})
+            except Exception:
+                logger.exception("failed to create vault pool")
+                return None
+        return VaultReader(_lazy_pool_holder[0])
+
+    def _is_hot_window(date_str: str) -> bool:
+        """Return True if show date is within vault_hot_window_hours of now."""
+        try:
+            show_dt = datetime.fromisoformat(date_str)
+            if show_dt.tzinfo is None:
+                show_dt = show_dt.replace(tzinfo=UTC)
+            age_hours = (datetime.now(tz=UTC) - show_dt).total_seconds() / 3600
+            return age_hours < settings.vault_hot_window_hours
+        except (ValueError, OverflowError):
+            return False
 
     mcp = FastMCP("Phish")
     started_at = time.time()
@@ -436,12 +674,22 @@ def build_server(
             params["state"] = state
         if country:
             params["country"] = country
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                rows = await vr.search_shows(
+                    year=year, venue=venue, city=city,
+                    state=state, country=country, limit=limit,
+                )
+                return _ok([_vault_show_summary(row) for row in rows])
+            except Exception:
+                logger.exception("vault search_shows failed; falling back to live")
         try:
             payload = await _cached_phishnet(
                 "search_shows", params, lambda: pn.search_shows(params)
             )
-            rows = payload if isinstance(payload, list) else []
-            summaries = [_phishnet_show_summary(row) for row in rows[:limit]]
+            rows_live = payload if isinstance(payload, list) else []
+            summaries = [_phishnet_show_summary(row) for row in rows_live[:limit]]
             return _ok(summaries)
         except PhishNetError as exc:
             logger.exception("search_shows failed")
@@ -466,6 +714,18 @@ def build_server(
         if not date_or_id:
             return _err("date_or_id is required", "INVALID_INPUT")
         is_date = len(date_or_id) == 10 and date_or_id.count("-") == 2
+        vr = await _get_vault_reader()
+        use_vault = vr is not None and not (is_date and _is_hot_window(date_or_id))
+        if use_vault:
+            assert vr is not None
+            try:
+                show_row, setlist_rows = await vr.get_show(date_or_id)
+                if show_row is None:
+                    return _err(f"show not found: {date_or_id}", "NOT_FOUND")
+                return _ok(_vault_show_full(show_row, setlist_rows))
+            except Exception:
+                logger.exception("vault get_show failed; falling back to live",
+                                 extra={"date_or_id": date_or_id})
         try:
             if is_date:
                 show_payload = await _cached_phishnet(
@@ -501,8 +761,8 @@ def build_server(
             rows = show_payload if isinstance(show_payload, list) else [show_payload]
             if not rows:
                 return _err(f"show not found: {date_or_id}", "NOT_FOUND")
-            setlist_rows = setlist_payload if isinstance(setlist_payload, list) else []
-            return _ok(_phishnet_show_full(rows[0], setlist_rows))
+            setlist_rows_live = setlist_payload if isinstance(setlist_payload, list) else []
+            return _ok(_phishnet_show_full(rows[0], setlist_rows_live))
         except PhishNetError as exc:
             logger.exception("get_show failed", extra={"date_or_id": date_or_id})
             code = "NOT_FOUND" if "no show" in str(exc).lower() else "UPSTREAM_DOWN"
@@ -521,15 +781,24 @@ def build_server(
         Idempotent. Example: ``recent_shows(limit=5)``.
         """
         capped = max(1, min(int(limit), 100))
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                rows = await vr.recent_shows(limit=capped)
+                return _ok([_vault_show_summary(row) for row in rows])
+            except Exception:
+                logger.exception("vault recent_shows failed; falling back to live")
         params: dict[str, Any] = {"order_by": "showdate.desc", "limit": capped}
         try:
             payload = await _cached_phishnet(
                 "recent_shows", params, lambda: pn.search_shows(params)
             )
-            rows = payload if isinstance(payload, list) else []
+            rows_live = payload if isinstance(payload, list) else []
             # Sort defensively: stub may not respect order_by.
-            rows = sorted(rows, key=lambda r: _safe_str(r.get("showdate")), reverse=True)
-            summaries = [_phishnet_show_summary(row) for row in rows[:capped]]
+            rows_live = sorted(
+                rows_live, key=lambda r: _safe_str(r.get("showdate")), reverse=True
+            )
+            summaries = [_phishnet_show_summary(row) for row in rows_live[:capped]]
             return _ok(summaries)
         except PhishNetError as exc:
             logger.exception("recent_shows failed")
@@ -552,13 +821,20 @@ def build_server(
         """
         if not query:
             return _err("query is required", "INVALID_INPUT")
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                rows = await vr.search_songs(query=query, limit=limit)
+                return _ok([_vault_song_summary(row) for row in rows])
+            except Exception:
+                logger.exception("vault search_songs failed; falling back to live")
         params = {"query": query}
         try:
             payload = await _cached_phishnet(
                 "search_songs", params, lambda: pn.search_songs(params)
             )
-            rows = payload if isinstance(payload, list) else []
-            return _ok([_phishnet_song_summary(row) for row in rows[:limit]])
+            rows_live = payload if isinstance(payload, list) else []
+            return _ok([_phishnet_song_summary(row) for row in rows_live[:limit]])
         except PhishNetError as exc:
             logger.exception("search_songs failed")
             return _err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
@@ -578,6 +854,16 @@ def build_server(
         """
         if not slug:
             return _err("slug is required", "INVALID_INPUT")
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                row = await vr.get_song(slug)
+                if row is None:
+                    return _err(f"song not found: {slug}", "NOT_FOUND")
+                return _ok(_vault_song_full(row))
+            except Exception:
+                logger.exception("vault get_song failed; falling back to live",
+                                 extra={"slug": slug})
         try:
             payload = await _cached_phishnet(
                 "get_song", {"slug": slug}, lambda: pn.get_song_by_slug(slug)
@@ -608,14 +894,24 @@ def build_server(
         if not slug:
             return _err("slug is required", "INVALID_INPUT")
         capped = max(1, min(int(limit), 500))
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                rows = await vr.song_history(slug=slug, limit=capped)
+                return _ok([_vault_performance(row) for row in rows])
+            except Exception:
+                logger.exception("vault song_history failed; falling back to live",
+                                 extra={"slug": slug})
         try:
             payload = await _cached_phishnet(
                 "song_history",
                 {"slug": slug},
                 lambda: pn.song_performances(slug),
             )
-            rows = payload if isinstance(payload, list) else []
-            rows_sorted = sorted(rows, key=lambda r: _safe_str(r.get("showdate")), reverse=True)
+            rows_live = payload if isinstance(payload, list) else []
+            rows_sorted = sorted(
+                rows_live, key=lambda r: _safe_str(r.get("showdate")), reverse=True
+            )
             return _ok([_phishnet_performance(row) for row in rows_sorted[:capped]])
         except PhishNetError as exc:
             logger.exception("song_history failed", extra={"slug": slug})
@@ -636,6 +932,13 @@ def build_server(
         Idempotent. Example: ``jam_chart(year=1997, limit=10)``.
         """
         capped = max(1, min(int(limit), 500))
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                rows = await vr.jam_chart(year=year, limit=capped)
+                return _ok([_vault_jam(row) for row in rows])
+            except Exception:
+                logger.exception("vault jam_chart failed; falling back to live")
         params: dict[str, Any] = {}
         if year is not None:
             params["year"] = year
@@ -643,8 +946,8 @@ def build_server(
             payload = await _cached_phishnet(
                 "jam_chart", params, lambda: pn.jam_chart(params or None)
             )
-            rows = payload if isinstance(payload, list) else []
-            return _ok([_phishnet_jam(row) for row in rows[:capped]])
+            rows_live = payload if isinstance(payload, list) else []
+            return _ok([_phishnet_jam(row) for row in rows_live[:capped]])
         except PhishNetError as exc:
             logger.exception("jam_chart failed")
             return _err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
@@ -667,6 +970,14 @@ def build_server(
             return _err("show_id_or_date is required", "INVALID_INPUT")
         capped = max(1, min(int(limit), 200))
         is_date = len(show_id_or_date) == 10 and show_id_or_date.count("-") == 2
+        vr = await _get_vault_reader()
+        # Vault reviews are indexed by show date only; skip vault for numeric ids.
+        if vr is not None and is_date:
+            try:
+                rows = await vr.get_reviews(show_date=show_id_or_date, limit=capped)
+                return _ok([_vault_review(row) for row in rows])
+            except Exception:
+                logger.exception("vault get_reviews failed; falling back to live")
         try:
             if is_date:
                 payload = await _cached_phishnet(
@@ -680,8 +991,8 @@ def build_server(
                     {"id": show_id_or_date},
                     lambda: pn.reviews_by_id(show_id_or_date),
                 )
-            rows = payload if isinstance(payload, list) else []
-            return _ok([_phishnet_review(row) for row in rows[:capped]])
+            rows_live = payload if isinstance(payload, list) else []
+            return _ok([_phishnet_review(row) for row in rows_live[:capped]])
         except PhishNetError as exc:
             logger.exception("get_reviews failed")
             return _err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
@@ -709,6 +1020,21 @@ def build_server(
         """
         if not show_id_or_date:
             return _err("show_id_or_date is required", "INVALID_INPUT")
+        is_date_key = len(show_id_or_date) == 10 and show_id_or_date.count("-") == 2
+        vr = await _get_vault_reader()
+        use_vault = vr is not None and not (
+            is_date_key and _is_hot_window(show_id_or_date)
+        )
+        if use_vault:
+            assert vr is not None
+            try:
+                show_row, tracks = await vr.get_audio(show_id_or_date)
+                if show_row is None:
+                    return _err(f"show not found: {show_id_or_date}", "NOT_FOUND")
+                return _ok(_vault_show_audio(show_row, tracks))
+            except Exception:
+                logger.exception("vault get_audio failed; falling back to live",
+                                 extra={"key": show_id_or_date})
         try:
             payload = await _cached_phishin(
                 "get_show",
@@ -739,6 +1065,16 @@ def build_server(
         """
         if not track_id:
             return _err("track_id is required", "INVALID_INPUT")
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                row = await vr.get_track(int(track_id))
+                if row is None:
+                    return _err(f"track not found: {track_id}", "NOT_FOUND")
+                return _ok(_vault_track(row))
+            except Exception:
+                logger.exception("vault get_track failed; falling back to live",
+                                 extra={"track_id": track_id})
         try:
             payload = await _cached_phishin(
                 "get_track", {"id": int(track_id)}, lambda: pi.get_track(int(track_id))
@@ -769,13 +1105,21 @@ def build_server(
         if not song_slug:
             return _err("song_slug is required", "INVALID_INPUT")
         capped = max(1, min(int(limit), 200))
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                rows = await vr.search_audio_tracks(song_slug=song_slug, limit=capped)
+                return _ok([_vault_track(row) for row in rows])
+            except Exception:
+                logger.exception("vault search_audio_tracks failed; falling back to live",
+                                 extra={"slug": song_slug})
         params = {"slug": song_slug, "per_page": capped}
         try:
             payload = await _cached_phishin(
                 "search_tracks", params, lambda: pi.search_tracks(params)
             )
-            rows = payload.get("tracks") or [] if isinstance(payload, dict) else []
-            return _ok([_phishin_track(row) for row in rows[:capped]])
+            rows_live = payload.get("tracks") or [] if isinstance(payload, dict) else []
+            return _ok([_phishin_track(row) for row in rows_live[:capped]])
         except PhishInError as exc:
             logger.exception("search_audio_tracks failed", extra={"slug": song_slug})
             return _err(str(exc), "UPSTREAM_DOWN", upstream="phish.in")
@@ -812,8 +1156,43 @@ def build_server(
         pn_snap = pn_throttle.snapshot()
         pi_snap = pi_throttle.snapshot()
 
+        # Build vault health snapshot.
+        vault_health_status = "ok"
+        vault_h: VaultHealth
+        vr = await _get_vault_reader()
+        if settings.vault_enabled:
+            last_etl_iso: str | None = None
+            staleness_hours: float | None = None
+            is_stale = False
+            if vr is not None:
+                with contextlib.suppress(Exception):
+                    etl_row = await vr.last_etl_run()
+                    if etl_row is not None:
+                        finished = etl_row.get("finished_at")
+                        if finished is not None:
+                            if isinstance(finished, datetime):
+                                last_etl_iso = finished.isoformat()
+                                staleness_hours = (
+                                    datetime.now(tz=UTC) - finished
+                                ).total_seconds() / 3600
+                            else:
+                                last_etl_iso = str(finished)
+                            if staleness_hours is not None and (
+                                staleness_hours > settings.vault_max_stale_hours
+                            ):
+                                is_stale = True
+                                vault_health_status = "degraded"
+            vault_h = VaultHealth(
+                enabled=True,
+                last_etl_run=last_etl_iso,
+                staleness_hours=staleness_hours,
+                stale=is_stale,
+            )
+        else:
+            vault_h = VaultHealth(enabled=False)
+
         report = Health(
-            status="ok",
+            status=vault_health_status,
             stub_mode=settings.stub_mode,
             version=__version__,
             phishnet=UpstreamHealth(
@@ -835,10 +1214,72 @@ def build_server(
                 last_hit_ts=_iso(response_cache.last_hit_ts),
                 last_miss_ts=_iso(response_cache.last_miss_ts),
             ),
+            vault=vault_h,
         )
         # Surface uptime in extras for log-side observability.
         logger.debug("health snapshot", extra={"uptime_s": int(time.time() - started_at)})
         return _ok(report)
+
+    # ------------------------------------------------------------------
+    # Vault-only analytical tools
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def venue_history(venue_slug: str, limit: int = 25) -> str:
+        """List all shows at a venue, most recent first. Requires vault.
+
+        Args:
+            venue_slug: Phish.net venue slug (e.g. ``"madison-square-garden"``).
+            limit: Max rows to return. Default 25, capped at 200.
+
+        Returns:
+            JSON ``{"data": [VenueShow, ...]}``. Each VenueShow has
+            ``show_id, date, venue_name, location, tour_name``.
+
+        Vault-only. Returns ``VAULT_DISABLED`` error if vault is not enabled.
+        Idempotent. Example: ``venue_history("madison-square-garden", limit=10)``.
+        """
+        vr = await _get_vault_reader()
+        if vr is None:
+            return _err("venue_history requires vault (VAULT_ENABLED=true)", "VAULT_DISABLED")
+        if not venue_slug:
+            return _err("venue_slug is required", "INVALID_INPUT")
+        capped = max(1, min(int(limit), 200))
+        try:
+            rows = await vr.venue_history(venue_slug=venue_slug, limit=capped)
+            return _ok([_vault_venue_show(row) for row in rows])
+        except Exception as exc:
+            logger.exception("venue_history failed", extra={"venue_slug": venue_slug})
+            return _err(str(exc), "VAULT_ERROR")
+
+    @mcp.tool()
+    async def songs_by_gap(limit: int = 25) -> str:
+        """List songs ordered by current gap (shows since last play), descending.
+
+        "Gap" means the number of shows since the song was last performed.
+        High-gap songs are overdue; lower-gap songs were recently played.
+        Only songs with a known gap are included.
+
+        Args:
+            limit: Max rows to return. Default 25, capped at 200.
+
+        Returns:
+            JSON ``{"data": [SongGap, ...]}``. Each SongGap has
+            ``slug, title, times_played, gap_current, last_played_date``.
+
+        Vault-only. Returns ``VAULT_DISABLED`` error if vault is not enabled.
+        Idempotent. Example: ``songs_by_gap(limit=10)``.
+        """
+        vr = await _get_vault_reader()
+        if vr is None:
+            return _err("songs_by_gap requires vault (VAULT_ENABLED=true)", "VAULT_DISABLED")
+        capped = max(1, min(int(limit), 200))
+        try:
+            rows = await vr.songs_by_gap(limit=capped)
+            return _ok([_vault_song_gap(row) for row in rows])
+        except Exception as exc:
+            logger.exception("songs_by_gap failed")
+            return _err(str(exc), "VAULT_ERROR")
 
     return mcp
 

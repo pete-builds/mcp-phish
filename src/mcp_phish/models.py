@@ -236,6 +236,17 @@ class CacheHealth(BaseModel):
     last_miss_ts: str | None = None
 
 
+class VaultHealth(BaseModel):
+    """Vault read-path health snapshot, surfaced in health()."""
+
+    model_config = _FROZEN
+
+    enabled: bool
+    last_etl_run: str | None = None  # ISO 8601
+    staleness_hours: float | None = None
+    stale: bool = False
+
+
 class Health(BaseModel):
     """Top-level health summary."""
 
@@ -247,3 +258,33 @@ class Health(BaseModel):
     phishnet: UpstreamHealth
     phishin: UpstreamHealth
     cache: CacheHealth
+    vault: VaultHealth
+
+
+# ---------------------------------------------------------------------------
+# Vault-only analytical models (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class VenueShow(BaseModel):
+    """One show at a venue — used by venue_history()."""
+
+    model_config = _FROZEN
+
+    show_id: str
+    date: str
+    venue_name: str = ""
+    location: str = ""
+    tour_name: str = ""
+
+
+class SongGap(BaseModel):
+    """Song with current gap — used by songs_by_gap()."""
+
+    model_config = _FROZEN
+
+    slug: str
+    title: str
+    times_played: int = 0
+    gap_current: int
+    last_played_date: str | None = None

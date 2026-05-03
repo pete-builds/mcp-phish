@@ -20,10 +20,13 @@ from mcp_phish.models import (
     ShowAudio,
     ShowSummary,
     Song,
+    SongGap,
     SongSummary,
     Track,
     UpstreamHealth,
+    VaultHealth,
     Venue,
+    VenueShow,
 )
 
 
@@ -132,6 +135,27 @@ def test_health_full_envelope() -> None:
         phishnet=UpstreamHealth(reachable=True, rps_limit=5.0, tokens_available=5.0),
         phishin=UpstreamHealth(reachable=True, rps_limit=10.0, tokens_available=10.0),
         cache=CacheHealth(path="/data/x.db", size_bytes=0, ttl_seconds=86400),
+        vault=VaultHealth(enabled=False),
     )
     assert health.status == "ok"
     assert health.cache.size_bytes == 0
+    assert health.vault.enabled is False
+
+
+def test_vault_health_defaults() -> None:
+    vh = VaultHealth(enabled=True)
+    assert vh.last_etl_run is None
+    assert vh.staleness_hours is None
+    assert vh.stale is False
+
+
+def test_venue_show_minimal() -> None:
+    vs = VenueShow(show_id="1", date="1995-12-30")
+    assert vs.venue_name == ""
+    assert vs.tour_name == ""
+
+
+def test_song_gap_required_fields() -> None:
+    sg = SongGap(slug="ghost", title="Ghost", times_played=312, gap_current=42)
+    assert sg.gap_current == 42
+    assert sg.last_played_date is None

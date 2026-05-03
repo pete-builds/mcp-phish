@@ -28,6 +28,7 @@ dependencies = [
     "pydantic==2.13.3",
     "pydantic-settings==2.14.0",
     "aiosqlite==0.21.0",
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -133,5 +134,5 @@ files = ["src/mcp_phish"]
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["fastmcp", "fastmcp.*", "aiosqlite", "aiosqlite.*"]
+module = ["fastmcp", "fastmcp.*", "aiosqlite", "aiosqlite.*", "asyncpg", "asyncpg.*"]
 ignore_missing_imports = true

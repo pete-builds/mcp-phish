@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,8 +24,10 @@ from mcp_phish.models import (
     ShowAudio,
     ShowSummary,
     Song,
+    SongGap,
     SongSummary,
     Track,
+    VenueShow,
 )
 from mcp_phish.server import build_server
 from mcp_phish.throttle import TokenBucket
@@ -303,3 +306,270 @@ async def test_cache_distinguishes_args(stub_settings: Settings) -> None:
         row = await cur.fetchone()
     assert row is not None
     assert row[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# Vault-path routing
+#
+# These tests pass a stub VaultReader into ``build_server`` and confirm that
+# vault-eligible tools route through the vault projections instead of the
+# live API. The point is the dispatcher logic, not the SQL — VaultReader
+# itself is exercised in ``test_vault.py``.
+# ---------------------------------------------------------------------------
+
+
+def _vault_settings(stub_settings: Settings) -> Settings:
+    """Clone stub_settings with vault_enabled=True and tighter hot window."""
+    return stub_settings.model_copy(
+        update={
+            "vault_enabled": True,
+            "vault_hot_window_hours": 1,  # so a 1995 date never reads live
+        }
+    )
+
+
+def _make_vault_stub(**overrides: Any) -> AsyncMock:
+    """Build an AsyncMock with default empty returns for VaultReader methods."""
+    stub = AsyncMock()
+    stub.get_show.return_value = (None, [])
+    stub.search_shows.return_value = []
+    stub.recent_shows.return_value = []
+    stub.get_song.return_value = None
+    stub.search_songs.return_value = []
+    stub.song_history.return_value = []
+    stub.jam_chart.return_value = []
+    stub.get_reviews.return_value = []
+    stub.get_audio.return_value = (None, [])
+    stub.get_track.return_value = None
+    stub.search_audio_tracks.return_value = []
+    stub.venue_history.return_value = []
+    stub.songs_by_gap.return_value = []
+    stub.last_etl_run.return_value = None
+    for name, value in overrides.items():
+        getattr(stub, name).return_value = value
+    return stub
+
+
+def _build(stub_settings: Settings, **kwargs: Any) -> Any:
+    cache = ResponseCache(
+        db_path=stub_settings.cache_db_path,
+        ttl_seconds=stub_settings.cache_ttl_seconds,
+    )
+    return build_server(
+        stub_settings,
+        cache=cache,
+        phishnet_throttle=TokenBucket(rps=100),
+        phishin_throttle=TokenBucket(rps=100),
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_vault_get_show_returns_projection_from_record(stub_settings: Settings) -> None:
+    show_row = {
+        "date": "1995-12-30",
+        "show_id_phishin": 412412,
+        "show_id_phishnet": 1253,
+        "venue_slug": "madison-square-garden",
+        "venue_name": "Madison Square Garden",
+        "city": "New York",
+        "state": "NY",
+        "country": "USA",
+        "location": "New York, NY",
+        "tour_name": "1995 NYE Run",
+    }
+    setlist_rows = [
+        {
+            "set_label": "1",
+            "position": 1,
+            "song_slug": "reba",
+            "song_name": "Reba",
+            "transition": ">",
+            "footnote": "",
+        }
+    ]
+    vault = _make_vault_stub(get_show=(show_row, setlist_rows))
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+
+    body = await _call(server, "get_show", date_or_id="1995-12-30")
+    show = Show(**body["data"])
+    assert show.show_id == "412412"
+    assert show.venue.name == "Madison Square Garden"
+    assert show.venue.slug == "madison-square-garden"
+    assert show.setlist[0].song_slug == "reba"
+    vault.get_show.assert_awaited_once_with("1995-12-30")
+
+
+@pytest.mark.asyncio
+async def test_vault_get_show_not_found_returns_error(stub_settings: Settings) -> None:
+    vault = _make_vault_stub()  # default get_show => (None, [])
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "get_show", date_or_id="1900-01-01")
+    assert body["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_vault_search_shows_uses_vault_projection(stub_settings: Settings) -> None:
+    rows = [
+        {
+            "date": "1997-11-17",
+            "show_id_phishin": 12345,
+            "show_id_phishnet": 678,
+            "venue_name": "McNichols Arena",
+            "location": "Denver, CO",
+            "tour_name": "Fall 1997",
+        }
+    ]
+    vault = _make_vault_stub(search_shows=rows)
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "search_shows", year=1997, limit=5)
+    summaries = [ShowSummary(**row) for row in body["data"]]
+    assert summaries
+    assert summaries[0].venue_name == "McNichols Arena"
+    vault.search_shows.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_vault_get_song_returns_projection(stub_settings: Settings) -> None:
+    vault = _make_vault_stub(
+        get_song={
+            "slug": "ghost",
+            "title": "Ghost",
+            "artist": None,
+            "original": True,
+            "times_played": 312,
+            "debut_date": "1997-06-13",
+            "last_play_date": "2024-12-31",
+            "gap_current": 0,
+        }
+    )
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "get_song", slug="ghost")
+    song = Song(**body["data"])
+    assert song.slug == "ghost"
+    assert song.gap == 0
+    assert song.last_played_date == "2024-12-31"
+
+
+@pytest.mark.asyncio
+async def test_vault_venue_history_tool(stub_settings: Settings) -> None:
+    rows = [
+        {
+            "date": "2024-12-31",
+            "show_id_phishin": 99999,
+            "show_id_phishnet": 1,
+            "venue_name": "Madison Square Garden",
+            "location": "New York, NY",
+            "tour_name": "2024 NYE Run",
+        }
+    ]
+    vault = _make_vault_stub(venue_history=rows)
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(
+        server, "venue_history", venue_slug="madison-square-garden", limit=10
+    )
+    venues = [VenueShow(**row) for row in body["data"]]
+    assert venues
+    assert venues[0].show_id == "99999"
+
+
+@pytest.mark.asyncio
+async def test_venue_history_requires_vault(stub_settings: Settings) -> None:
+    """Without vault enabled (and no reader), tool returns VAULT_DISABLED."""
+    server = _build(stub_settings)  # vault_enabled defaults to False
+    body = await _call(server, "venue_history", venue_slug="msg", limit=5)
+    assert body["code"] == "VAULT_DISABLED"
+
+
+@pytest.mark.asyncio
+async def test_vault_songs_by_gap_tool(stub_settings: Settings) -> None:
+    rows = [
+        {
+            "slug": "harpua",
+            "title": "Harpua",
+            "times_played": 50,
+            "gap_current": 200,
+            "last_play_date": "2019-08-30",
+        }
+    ]
+    vault = _make_vault_stub(songs_by_gap=rows)
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "songs_by_gap", limit=10)
+    gaps = [SongGap(**row) for row in body["data"]]
+    assert gaps[0].slug == "harpua"
+    assert gaps[0].gap_current == 200
+
+
+@pytest.mark.asyncio
+async def test_songs_by_gap_requires_vault(stub_settings: Settings) -> None:
+    server = _build(stub_settings)
+    body = await _call(server, "songs_by_gap", limit=5)
+    assert body["code"] == "VAULT_DISABLED"
+
+
+@pytest.mark.asyncio
+async def test_vault_failure_falls_back_to_live(stub_settings: Settings) -> None:
+    """If vault throws, the server falls back to the live (stub) path."""
+    vault = _make_vault_stub()
+    vault.get_song.side_effect = RuntimeError("simulated vault outage")
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "get_song", slug="fluffhead")
+    # Stub fixtures contain "fluffhead" — fallback succeeds.
+    song = Song(**body["data"])
+    assert song.slug == "fluffhead"
+
+
+@pytest.mark.asyncio
+async def test_health_reports_vault_disabled_by_default(stub_settings: Settings) -> None:
+    server = _build(stub_settings)
+    body = await _call(server, "health")
+    health = Health(**body["data"])
+    assert health.vault.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_health_reports_vault_enabled_with_etl(stub_settings: Settings) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    finished = datetime.now(tz=UTC) - timedelta(hours=2)
+    vault = _make_vault_stub(
+        last_etl_run={
+            "id": 1,
+            "started_at": finished,
+            "finished_at": finished,
+            "mode": "incremental",
+            "status": "ok",
+            "rows_added": 5,
+            "rows_updated": 2,
+        }
+    )
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "health")
+    health = Health(**body["data"])
+    assert health.vault.enabled is True
+    assert health.vault.stale is False
+    assert health.vault.staleness_hours is not None
+    assert 1 < health.vault.staleness_hours < 3
+
+
+@pytest.mark.asyncio
+async def test_health_marks_vault_stale_when_etl_too_old(stub_settings: Settings) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    finished = datetime.now(tz=UTC) - timedelta(hours=72)  # > default 36h max
+    vault = _make_vault_stub(
+        last_etl_run={
+            "id": 1,
+            "started_at": finished,
+            "finished_at": finished,
+            "mode": "incremental",
+            "status": "ok",
+            "rows_added": 0,
+            "rows_updated": 0,
+        }
+    )
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(server, "health")
+    health = Health(**body["data"])
+    assert health.status == "degraded"
+    assert health.vault.stale is True

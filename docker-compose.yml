@@ -25,6 +25,13 @@ services:
       # Persist the opaque KV cache across restarts. Schema is one table:
       # (endpoint, params_hash) -> raw_json + fetched_at. NOT a vault.
       - mcp-phish-cache:/data
+    networks:
+      - default
+      # Phase 3: join the phish-vault Postgres network so the MCP server can
+      # reach the `postgres` container by name. The external network is
+      # created by the phish-vault docker-compose stack (default network
+      # naming). Joining it here is read-only — mcp-phish never writes.
+      - phish-vault
     logging: *default-logging
     healthcheck:
       test: ["CMD", "python", "-m", "mcp_phish.healthcheck"]
@@ -37,3 +44,8 @@ services:
 
 volumes:
   mcp-phish-cache:
+
+networks:
+  phish-vault:
+    external: true
+    name: phish-vault_default
