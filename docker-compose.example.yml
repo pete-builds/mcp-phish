@@ -1,0 +1,32 @@
+# Example docker-compose for self-build (not the GHCR image).
+# Copy to docker-compose.yml and tweak as needed.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mcp-phish:
+    build: .
+    image: mcp-phish:dev
+    container_name: mcp-phish-dev
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    ports:
+      - "3705:3705"
+    env_file:
+      - .env
+    volumes:
+      - ./local-cache:/data
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python", "-m", "mcp_phish.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true

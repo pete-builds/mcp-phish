@@ -1,0 +1,39 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mcp-phish:
+    build: .
+    image: mcp-phish:0.1.0
+    container_name: mcp-phish
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    ports:
+      - "${MCP_PORT:-3705}:${MCP_PORT:-3705}"
+    env_file:
+      - .env
+    environment:
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "${MCP_PORT:-3705}"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      # Persist the opaque KV cache across restarts. Schema is one table:
+      # (endpoint, params_hash) -> raw_json + fetched_at. NOT a vault.
+      - mcp-phish-cache:/data
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "python", "-m", "mcp_phish.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mcp-phish-cache:
