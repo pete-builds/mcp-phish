@@ -679,8 +679,12 @@ def build_server(
         if vr is not None:
             try:
                 rows = await vr.search_shows(
-                    year=year, venue=venue, city=city,
-                    state=state, country=country, limit=limit,
+                    year=year,
+                    venue=venue,
+                    city=city,
+                    state=state,
+                    country=country,
+                    limit=limit,
                 )
                 return _ok([_vault_show_summary(row) for row in rows])
             except Exception:
@@ -725,8 +729,9 @@ def build_server(
                     return _err(f"show not found: {date_or_id}", "NOT_FOUND")
                 return _ok(_vault_show_full(show_row, setlist_rows))
             except Exception:
-                logger.exception("vault get_show failed; falling back to live",
-                                 extra={"date_or_id": date_or_id})
+                logger.exception(
+                    "vault get_show failed; falling back to live", extra={"date_or_id": date_or_id}
+                )
         try:
             if is_date:
                 show_payload = await _cached_phishnet(
@@ -796,9 +801,7 @@ def build_server(
             )
             rows_live = payload if isinstance(payload, list) else []
             # Sort defensively: stub may not respect order_by.
-            rows_live = sorted(
-                rows_live, key=lambda r: _safe_str(r.get("showdate")), reverse=True
-            )
+            rows_live = sorted(rows_live, key=lambda r: _safe_str(r.get("showdate")), reverse=True)
             summaries = [_phishnet_show_summary(row) for row in rows_live[:capped]]
             return _ok(summaries)
         except PhishNetError as exc:
@@ -863,8 +866,9 @@ def build_server(
                     return _err(f"song not found: {slug}", "NOT_FOUND")
                 return _ok(_vault_song_full(row))
             except Exception:
-                logger.exception("vault get_song failed; falling back to live",
-                                 extra={"slug": slug})
+                logger.exception(
+                    "vault get_song failed; falling back to live", extra={"slug": slug}
+                )
         try:
             payload = await _cached_phishnet(
                 "get_song", {"slug": slug}, lambda: pn.get_song_by_slug(slug)
@@ -943,8 +947,7 @@ def build_server(
             except PhishNetError:
                 unknown_live.append(slug)
             except Exception:
-                logger.exception("validate_song_slugs upstream error",
-                                 extra={"slug": slug})
+                logger.exception("validate_song_slugs upstream error", extra={"slug": slug})
                 return _err(
                     "upstream lookup failed during batch validation",
                     "UPSTREAM_DOWN",
@@ -976,8 +979,9 @@ def build_server(
                 rows = await vr.song_history(slug=slug, limit=capped)
                 return _ok([_vault_performance(row) for row in rows])
             except Exception:
-                logger.exception("vault song_history failed; falling back to live",
-                                 extra={"slug": slug})
+                logger.exception(
+                    "vault song_history failed; falling back to live", extra={"slug": slug}
+                )
         try:
             payload = await _cached_phishnet(
                 "song_history",
@@ -1098,9 +1102,7 @@ def build_server(
             return _err("show_id_or_date is required", "INVALID_INPUT")
         is_date_key = len(show_id_or_date) == 10 and show_id_or_date.count("-") == 2
         vr = await _get_vault_reader()
-        use_vault = vr is not None and not (
-            is_date_key and _is_hot_window(show_id_or_date)
-        )
+        use_vault = vr is not None and not (is_date_key and _is_hot_window(show_id_or_date))
         if use_vault:
             assert vr is not None
             try:
@@ -1109,8 +1111,9 @@ def build_server(
                     return _err(f"show not found: {show_id_or_date}", "NOT_FOUND")
                 return _ok(_vault_show_audio(show_row, tracks))
             except Exception:
-                logger.exception("vault get_audio failed; falling back to live",
-                                 extra={"key": show_id_or_date})
+                logger.exception(
+                    "vault get_audio failed; falling back to live", extra={"key": show_id_or_date}
+                )
         try:
             payload = await _cached_phishin(
                 "get_show",
@@ -1149,8 +1152,9 @@ def build_server(
                     return _err(f"track not found: {track_id}", "NOT_FOUND")
                 return _ok(_vault_track(row))
             except Exception:
-                logger.exception("vault get_track failed; falling back to live",
-                                 extra={"track_id": track_id})
+                logger.exception(
+                    "vault get_track failed; falling back to live", extra={"track_id": track_id}
+                )
         try:
             payload = await _cached_phishin(
                 "get_track", {"id": int(track_id)}, lambda: pi.get_track(int(track_id))
@@ -1187,8 +1191,10 @@ def build_server(
                 rows = await vr.search_audio_tracks(song_slug=song_slug, limit=capped)
                 return _ok([_vault_track(row) for row in rows])
             except Exception:
-                logger.exception("vault search_audio_tracks failed; falling back to live",
-                                 extra={"slug": song_slug})
+                logger.exception(
+                    "vault search_audio_tracks failed; falling back to live",
+                    extra={"slug": song_slug},
+                )
         params = {"slug": song_slug, "per_page": capped}
         try:
             payload = await _cached_phishin(

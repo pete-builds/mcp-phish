@@ -103,9 +103,7 @@ async def test_get_show_by_date_executes_date_branch(
 
 
 @pytest.mark.asyncio
-async def test_get_show_by_id_executes_id_branch(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_get_show_by_id_executes_id_branch(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetchrow.return_value = {
         "date": "1997-11-17",
         "show_id_phishin": 12345,
@@ -282,9 +280,7 @@ async def test_jam_chart_no_year_passes_only_limit(
 
 
 @pytest.mark.asyncio
-async def test_jam_chart_with_year_adds_filter(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_jam_chart_with_year_adds_filter(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetch.return_value = []
     await reader.jam_chart(year=1997, limit=5)
     sql_text, *args = fake_conn.fetch.await_args.args
@@ -298,9 +294,7 @@ async def test_jam_chart_with_year_adds_filter(
 
 
 @pytest.mark.asyncio
-async def test_get_reviews_filters_by_date(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_get_reviews_filters_by_date(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetch.return_value = []
     await reader.get_reviews("1995-12-30", limit=3)
     sql_text, date_arg, limit_arg = fake_conn.fetch.await_args.args
@@ -315,9 +309,7 @@ async def test_get_reviews_filters_by_date(
 
 
 @pytest.mark.asyncio
-async def test_get_audio_by_date_pulls_tracks(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_get_audio_by_date_pulls_tracks(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetchrow.return_value = {"date": "1997-11-17"}
     fake_conn.fetch.return_value = [{"id": 1, "show_date": "1997-11-17"}]
 
@@ -332,9 +324,7 @@ async def test_get_audio_by_date_pulls_tracks(
 
 
 @pytest.mark.asyncio
-async def test_get_audio_by_id_uses_id_branch(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_get_audio_by_id_uses_id_branch(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetchrow.return_value = {"date": "1997-11-17"}
     fake_conn.fetch.return_value = []
     await reader.get_audio("999")
@@ -378,9 +368,7 @@ async def test_search_audio_tracks_filters_by_slug(
 
 
 @pytest.mark.asyncio
-async def test_venue_history_orders_desc(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_venue_history_orders_desc(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetch.return_value = []
     await reader.venue_history("madison-square-garden", limit=10)
     sql_text, slug_arg, limit_arg = fake_conn.fetch.await_args.args
@@ -391,9 +379,7 @@ async def test_venue_history_orders_desc(
 
 
 @pytest.mark.asyncio
-async def test_songs_by_gap_skips_null_gap(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_songs_by_gap_skips_null_gap(reader: VaultReader, fake_conn: _FakeConn) -> None:
     fake_conn.fetch.return_value = []
     await reader.songs_by_gap(limit=8)
     sql_text, limit_arg = fake_conn.fetch.await_args.args
@@ -408,9 +394,7 @@ async def test_songs_by_gap_skips_null_gap(
 
 
 @pytest.mark.asyncio
-async def test_last_etl_run_returns_dict(
-    reader: VaultReader, fake_conn: _FakeConn
-) -> None:
+async def test_last_etl_run_returns_dict(reader: VaultReader, fake_conn: _FakeConn) -> None:
     finished = datetime(2026, 5, 3, 6, 0, 0, tzinfo=UTC)
     fake_conn.fetchrow.return_value = {
         "id": 42,

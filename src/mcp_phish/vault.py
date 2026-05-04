@@ -32,9 +32,7 @@ class VaultReader:
     # Show queries
     # ------------------------------------------------------------------
 
-    async def get_show(
-        self, date_or_id: str
-    ) -> tuple[asyncpg.Record | None, list[asyncpg.Record]]:
+    async def get_show(self, date_or_id: str) -> tuple[asyncpg.Record | None, list[asyncpg.Record]]:
         """Return (show_row, setlist_rows) for a date (YYYY-MM-DD) or phish.in show id.
 
         show_row is None when not found. setlist_rows may be empty if the
@@ -152,10 +150,12 @@ class VaultReader:
         """  # noqa: S608 — values pass through asyncpg params, fragments are internal
         async with self._pool.acquire() as conn:
             return list(await conn.fetch(sql, *args))
+
     async def recent_shows(self, limit: int = 10) -> list[asyncpg.Record]:
         """Return the most recent shows, newest first."""
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
                     SELECT s.date, s.show_id_phishin, s.show_id_phishnet,
                            v.name AS venue_name, v.location,
@@ -177,7 +177,8 @@ class VaultReader:
     async def get_song(self, slug: str) -> asyncpg.Record | None:
         """Return a single song row by slug, or None."""
         async with self._pool.acquire() as conn:
-            return await conn.fetchrow(                """
+            return await conn.fetchrow(
+                """
                 SELECT slug, title, alias, original, artist,
                        tracks_count AS times_played,
                        debut_date, last_play_date, gap_current
@@ -237,7 +238,8 @@ class VaultReader:
         performance with venue and gap context.
         """
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
                     SELECT tr.show_date AS date,
                            s.show_id_phishin,
@@ -263,9 +265,7 @@ class VaultReader:
     # Jam chart
     # ------------------------------------------------------------------
 
-    async def jam_chart(
-        self, year: int | None = None, limit: int = 50
-    ) -> list[asyncpg.Record]:
+    async def jam_chart(self, year: int | None = None, limit: int = 50) -> list[asyncpg.Record]:
         """Return jam-chart entries, optionally filtered by year."""
         args: list[Any] = []
         year_clause = ""
@@ -295,6 +295,7 @@ class VaultReader:
         """  # noqa: S608 — values pass through asyncpg params, fragments are internal
         async with self._pool.acquire() as conn:
             return list(await conn.fetch(sql, *args))
+
     # ------------------------------------------------------------------
     # Reviews
     # ------------------------------------------------------------------
@@ -302,7 +303,8 @@ class VaultReader:
     async def get_reviews(self, show_date: str, limit: int = 25) -> list[asyncpg.Record]:
         """Return reviews for a show date."""
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
                     SELECT id, show_date, upstream_review_id,
                            username, score, review_text, posted_at
@@ -374,7 +376,8 @@ class VaultReader:
     async def get_track(self, track_id: int) -> asyncpg.Record | None:
         """Return a single track by its phish.in id."""
         async with self._pool.acquire() as conn:
-            return await conn.fetchrow(                """
+            return await conn.fetchrow(
+                """
                 SELECT tr.id, tr.show_date, tr.slug, tr.title,
                        tr.position, tr.set_name, tr.duration_ms,
                        tr.mp3_url, tr.waveform_image_url,
@@ -389,12 +392,11 @@ class VaultReader:
                 track_id,
             )
 
-    async def search_audio_tracks(
-        self, song_slug: str, limit: int = 20
-    ) -> list[asyncpg.Record]:
+    async def search_audio_tracks(self, song_slug: str, limit: int = 20) -> list[asyncpg.Record]:
         """Return every track for a given song slug, joined to shows + venues."""
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
                     SELECT tr.id, tr.show_date, tr.slug, tr.title,
                            tr.position, tr.set_name, tr.duration_ms,
@@ -418,12 +420,11 @@ class VaultReader:
     # Analytical tools (vault-only)
     # ------------------------------------------------------------------
 
-    async def venue_history(
-        self, venue_slug: str, limit: int = 25
-    ) -> list[asyncpg.Record]:
+    async def venue_history(self, venue_slug: str, limit: int = 25) -> list[asyncpg.Record]:
         """Return shows at a given venue, newest first."""
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
                     SELECT s.date, s.show_id_phishin, s.show_id_phishnet,
                            v.name AS venue_name, v.location,
@@ -443,7 +444,8 @@ class VaultReader:
     async def songs_by_gap(self, limit: int = 25) -> list[asyncpg.Record]:
         """Return songs ordered by current gap (shows since last play), descending."""
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
                     SELECT slug, title,
                            tracks_count AS times_played,

@@ -467,9 +467,7 @@ async def test_vault_venue_history_tool(stub_settings: Settings) -> None:
     ]
     vault = _make_vault_stub(venue_history=rows)
     server = _build(_vault_settings(stub_settings), vault_reader=vault)
-    body = await _call(
-        server, "venue_history", venue_slug="madison-square-garden", limit=10
-    )
+    body = await _call(server, "venue_history", venue_slug="madison-square-garden", limit=10)
     venues = [VenueShow(**row) for row in body["data"]]
     assert venues
     assert venues[0].show_id == "99999"
