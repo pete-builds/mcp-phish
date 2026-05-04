@@ -43,6 +43,7 @@ from mcp_phish.models import (
     Show,
     ShowAudio,
     ShowSummary,
+    SlugValidation,
     Song,
     SongGap,
     SongSummary,
@@ -876,6 +877,81 @@ def build_server(
             logger.exception("get_song failed", extra={"slug": slug})
             code = "NOT_FOUND" if "no song" in str(exc).lower() else "UPSTREAM_DOWN"
             return _err(str(exc), code, upstream="phish.net")
+
+    @mcp.tool()
+    async def validate_song_slugs(slugs: list[str]) -> str:
+        """Partition a list of song slugs into ``valid`` and ``unknown``.
+
+        Useful for form validation in a downstream client (e.g. phish-game's
+        date-pick screen). One round-trip when vault is enabled — the
+        live-API fallback fans out to one ``get_song`` call per slug.
+
+        Args:
+            slugs: 1 to 50 candidate slugs (e.g. ``["tweezer","fluffhead"]``).
+                Empty or oversized lists return ``INVALID_INPUT``.
+
+        Returns:
+            JSON ``{"data": {"valid": [...], "unknown": [...]}}``.
+            ``valid`` lists the slugs that resolved, in the order the
+            vault returned them (sorted by slug for determinism).
+            ``unknown`` lists the slugs that did not resolve, preserving
+            their request order.
+
+        Idempotent. Read-only. Example:
+        ``validate_song_slugs(["tweezer","blarghhh","fluffhead"])`` →
+        ``{"valid": ["fluffhead","tweezer"], "unknown": ["blarghhh"]}``.
+        """
+        if not isinstance(slugs, list) or len(slugs) == 0:
+            return _err("slugs must be a non-empty list", "INVALID_INPUT")
+        if len(slugs) > 50:
+            return _err(
+                f"too many slugs ({len(slugs)}); cap is 50",
+                "INVALID_INPUT",
+                count=len(slugs),
+            )
+        # Normalise but preserve request order for the unknown list.
+        requested: list[str] = [str(s).strip() for s in slugs]
+        # Reject empty entries — they are never valid slugs.
+        if any(not s for s in requested):
+            return _err("slugs must not contain empty strings", "INVALID_INPUT")
+
+        vr = await _get_vault_reader()
+        if vr is not None:
+            try:
+                found_set = await vr.validate_slugs(requested)
+                valid_sorted = sorted(found_set)
+                unknown = [s for s in requested if s not in found_set]
+                return _ok(SlugValidation(valid=valid_sorted, unknown=unknown))
+            except Exception as exc:
+                logger.exception("vault validate_song_slugs failed; falling back to live")
+                # Fall through to live path so a transient pool error isn't fatal.
+                _ = exc
+
+        # Live-API fallback: one get_song per slug. PhishNetError -> unknown.
+        valid_live: list[str] = []
+        unknown_live: list[str] = []
+        for slug in requested:
+            try:
+                payload = await _cached_phishnet(
+                    "get_song", {"slug": slug}, lambda s=slug: pn.get_song_by_slug(s)
+                )
+                rows = payload if isinstance(payload, list) else [payload]
+                if rows and rows[0]:
+                    valid_live.append(slug)
+                else:
+                    unknown_live.append(slug)
+            except PhishNetError:
+                unknown_live.append(slug)
+            except Exception:
+                logger.exception("validate_song_slugs upstream error",
+                                 extra={"slug": slug})
+                return _err(
+                    "upstream lookup failed during batch validation",
+                    "UPSTREAM_DOWN",
+                    upstream="phish.net",
+                    slug=slug,
+                )
+        return _ok(SlugValidation(valid=sorted(valid_live), unknown=unknown_live))
 
     @mcp.tool()
     async def song_history(slug: str, limit: int = 50) -> str:

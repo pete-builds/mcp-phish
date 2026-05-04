@@ -205,9 +205,50 @@ async def test_search_songs_uses_ilike_with_query(
     fake_conn.fetch.return_value = []
     await reader.search_songs("fluff", limit=5)
     sql_text, query_arg, limit_arg = fake_conn.fetch.await_args.args
-    assert "title ILIKE $1" in sql_text
+    assert "s.title ILIKE $1" in sql_text
     assert query_arg == "%fluff%"
     assert limit_arg == 5
+
+
+@pytest.mark.asyncio
+async def test_search_songs_joins_song_aliases_local(
+    reader: VaultReader, fake_conn: _FakeConn
+) -> None:
+    """The new alias-aware SQL must LEFT JOIN song_aliases_local."""
+    fake_conn.fetch.return_value = []
+    await reader.search_songs("yem", limit=5)
+    sql_text, _query_arg, _limit_arg = fake_conn.fetch.await_args.args
+    assert "song_aliases_local" in sql_text
+    assert "LEFT JOIN" in sql_text
+    assert "a.alias ILIKE $1" in sql_text
+    # DISTINCT prevents row duplication when a song has multiple aliases.
+    assert "SELECT DISTINCT" in sql_text
+
+
+@pytest.mark.asyncio
+async def test_validate_slugs_returns_intersection(
+    reader: VaultReader, fake_conn: _FakeConn
+) -> None:
+    """validate_slugs runs one SELECT and returns matching slugs as a set."""
+    fake_conn.fetch.return_value = [
+        {"slug": "fluffhead"},
+        {"slug": "tweezer"},
+    ]
+    result = await reader.validate_slugs(["fluffhead", "tweezer", "blarghhh"])
+    assert result == {"fluffhead", "tweezer"}
+    sql_text, slugs_arg = fake_conn.fetch.await_args.args
+    assert "slug = ANY($1::text[])" in sql_text
+    assert slugs_arg == ["fluffhead", "tweezer", "blarghhh"]
+
+
+@pytest.mark.asyncio
+async def test_validate_slugs_empty_input_short_circuits(
+    reader: VaultReader, fake_conn: _FakeConn
+) -> None:
+    """An empty input list must NOT issue a SQL call."""
+    result = await reader.validate_slugs([])
+    assert result == set()
+    fake_conn.fetch.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -188,22 +188,47 @@ class VaultReader:
             )
 
     async def search_songs(self, query: str, limit: int = 25) -> list[asyncpg.Record]:
-        """Full-text ILIKE search against song title and alias."""
+        """ILIKE search against song title, upstream alias, and community aliases.
+
+        Joins ``song_aliases_local`` (community-curated nicknames seeded by
+        migration 003) so a fan typing "yem" or "rnr" finds the canonical
+        song. The LEFT JOIN preserves rows that have no community alias.
+        """
         async with self._pool.acquire() as conn:
-            return list(                await conn.fetch(
+            return list(
+                await conn.fetch(
                     """
-                    SELECT slug, title, alias, original, artist,
-                           tracks_count AS times_played
-                    FROM   songs
-                    WHERE  title ILIKE $1
-                       OR  alias ILIKE $1
-                    ORDER  BY tracks_count DESC
+                    SELECT DISTINCT s.slug, s.title, s.alias, s.original,
+                                    s.artist,
+                                    s.tracks_count AS times_played
+                    FROM   songs s
+                    LEFT JOIN song_aliases_local a ON a.song_slug = s.slug
+                    WHERE  s.title ILIKE $1
+                       OR  s.alias ILIKE $1
+                       OR  a.alias ILIKE $1
+                    ORDER  BY s.tracks_count DESC
                     LIMIT  $2
                     """,
                     f"%{query}%",
                     limit,
                 )
             )
+
+    async def validate_slugs(self, slugs: list[str]) -> set[str]:
+        """Return the subset of ``slugs`` that exist in ``songs.slug``.
+
+        Single SELECT, single round-trip. Order is not preserved here;
+        the caller is responsible for ordering the result against the
+        request.
+        """
+        if not slugs:
+            return set()
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT slug FROM songs WHERE slug = ANY($1::text[])",
+                slugs,
+            )
+        return {str(row["slug"]) for row in rows}
 
     async def song_history(self, slug: str, limit: int = 50) -> list[asyncpg.Record]:
         """Return performances of a song, most-recent first.

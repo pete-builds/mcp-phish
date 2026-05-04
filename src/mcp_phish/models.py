@@ -288,3 +288,23 @@ class SongGap(BaseModel):
     times_played: int = 0
     gap_current: int
     last_played_date: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Batch validation model (form-validation in downstream clients)
+# ---------------------------------------------------------------------------
+
+
+class SlugValidation(BaseModel):
+    """Result of validating a batch of song slugs against the catalog.
+
+    Used by ``validate_song_slugs()``. ``valid`` is the subset of
+    requested slugs that resolved to a real song; ``unknown`` is the
+    subset that did not. Both lists preserve a deterministic order
+    (see the tool docstring for details).
+    """
+
+    model_config = _FROZEN
+
+    valid: list[str] = Field(default_factory=list)
+    unknown: list[str] = Field(default_factory=list)

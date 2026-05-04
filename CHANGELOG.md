@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (batch validation + community aliases)
+
+- **`validate_song_slugs(slugs)` tool.** Partitions a list of up to 50
+  candidate slugs into `valid` and `unknown`. Single SELECT against the
+  vault when enabled; falls back to per-slug `get_song` lookups against the
+  live phish.net API when not. Designed for downstream form-validation
+  flows (e.g. phish-game's date-pick screen).
+- **`SlugValidation` model.** New frozen Pydantic shape:
+  `{valid: list[str], unknown: list[str]}`. Existing models remain
+  byte-identical.
+- **`VaultReader.validate_slugs(slugs)`.** Single round-trip set lookup
+  against `songs.slug` via `slug = ANY($1::text[])`.
+
+### Changed
+
+- **`search_songs` is now alias-aware.** The vault SQL LEFT JOINs the new
+  community-curated `song_aliases_local` table (seeded by phish-vault
+  migration 003). Fans typing "yem", "rnr", "dwd" find the canonical
+  song. The live (non-vault) path is unchanged.
+
 ### Added (Phase 3 — Vault read path)
 
 - **Vault-backed read path.** When `VAULT_ENABLED=true`, all read tools

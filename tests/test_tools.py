@@ -23,6 +23,7 @@ from mcp_phish.models import (
     Show,
     ShowAudio,
     ShowSummary,
+    SlugValidation,
     Song,
     SongGap,
     SongSummary,
@@ -344,6 +345,7 @@ def _make_vault_stub(**overrides: Any) -> AsyncMock:
     stub.search_audio_tracks.return_value = []
     stub.venue_history.return_value = []
     stub.songs_by_gap.return_value = []
+    stub.validate_slugs.return_value = set()
     stub.last_etl_run.return_value = None
     for name, value in overrides.items():
         getattr(stub, name).return_value = value
@@ -573,3 +575,104 @@ async def test_health_marks_vault_stale_when_etl_too_old(stub_settings: Settings
     health = Health(**body["data"])
     assert health.status == "degraded"
     assert health.vault.stale is True
+
+
+# ---------------------------------------------------------------------------
+# validate_song_slugs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_empty_list_invalid(server: Any) -> None:
+    body = await _call(server, "validate_song_slugs", slugs=[])
+    assert body["code"] == "INVALID_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_oversize_invalid(server: Any) -> None:
+    too_many = [f"song-{i}" for i in range(51)]
+    body = await _call(server, "validate_song_slugs", slugs=too_many)
+    assert body["code"] == "INVALID_INPUT"
+    assert body.get("details", {}).get("count") == 51
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_rejects_empty_strings(server: Any) -> None:
+    body = await _call(server, "validate_song_slugs", slugs=["fluffhead", ""])
+    assert body["code"] == "INVALID_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_live_fallback_partitions(server: Any) -> None:
+    """Without vault, the tool fans out to phish.net (stub) per slug.
+
+    Stub catalog contains: fluffhead, tweezer, mikes-song, ghost, reba,
+    satisfaction. Anything else is unknown.
+    """
+    body = await _call(
+        server,
+        "validate_song_slugs",
+        slugs=["tweezer", "blarghhh", "fluffhead", "totallyfakething"],
+    )
+    sv = SlugValidation(**body["data"])
+    assert set(sv.valid) == {"tweezer", "fluffhead"}
+    # valid is sorted for determinism
+    assert sv.valid == sorted(sv.valid)
+    # unknown preserves request order
+    assert sv.unknown == ["blarghhh", "totallyfakething"]
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_uses_vault_when_enabled(stub_settings: Settings) -> None:
+    """With vault enabled, the tool calls vault.validate_slugs once."""
+    vault = _make_vault_stub(validate_slugs={"tweezer", "fluffhead"})
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(
+        server,
+        "validate_song_slugs",
+        slugs=["tweezer", "blarghhh", "fluffhead"],
+    )
+    sv = SlugValidation(**body["data"])
+    assert sv.valid == ["fluffhead", "tweezer"]  # sorted
+    assert sv.unknown == ["blarghhh"]
+    vault.validate_slugs.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_vault_outage_falls_back(stub_settings: Settings) -> None:
+    """If the vault throws, the live (stub) path is used as a safety net."""
+    vault = _make_vault_stub()
+    vault.validate_slugs.side_effect = RuntimeError("simulated vault outage")
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+    body = await _call(
+        server,
+        "validate_song_slugs",
+        slugs=["fluffhead", "blarghhh"],
+    )
+    sv = SlugValidation(**body["data"])
+    assert sv.valid == ["fluffhead"]
+    assert sv.unknown == ["blarghhh"]
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_all_valid(server: Any) -> None:
+    body = await _call(
+        server,
+        "validate_song_slugs",
+        slugs=["fluffhead", "tweezer", "ghost"],
+    )
+    sv = SlugValidation(**body["data"])
+    assert sv.valid == ["fluffhead", "ghost", "tweezer"]
+    assert sv.unknown == []
+
+
+@pytest.mark.asyncio
+async def test_validate_song_slugs_all_unknown(server: Any) -> None:
+    body = await _call(
+        server,
+        "validate_song_slugs",
+        slugs=["nope-1", "nope-2"],
+    )
+    sv = SlugValidation(**body["data"])
+    assert sv.valid == []
+    assert sv.unknown == ["nope-1", "nope-2"]
