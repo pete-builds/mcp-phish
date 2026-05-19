@@ -34,6 +34,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/site-packages \
     PATH=/app/site-packages/bin:$PATH
 
+# Apply current Debian security updates on top of the pinned Python base image.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root user with pinned UID 1000 (no shell, no home).
 RUN groupadd --system --gid 1000 mcp \
     && useradd --system --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin mcp \
