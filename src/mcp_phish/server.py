@@ -611,20 +611,32 @@ def build_server(
     mcp = FastMCP("Phish")
     started_at = time.time()
 
-    async def _cached_phishnet(endpoint: str, params: dict[str, Any], call: Any) -> Any:
+    async def _cached_phishnet(
+        endpoint: str,
+        params: dict[str, Any],
+        call: Any,
+        *,
+        ttl_override: int | None = None,
+    ) -> Any:
         await response_cache.init()
         cache_key, cache_params = _ckey_phishnet(endpoint, **params)
-        hit = await response_cache.get(cache_key, cache_params)
+        hit = await response_cache.get(cache_key, cache_params, ttl_override=ttl_override)
         if hit is not None:
             return hit
         payload = await call()
         await response_cache.put(cache_key, cache_params, payload)
         return payload
 
-    async def _cached_phishin(endpoint: str, params: dict[str, Any], call: Any) -> Any:
+    async def _cached_phishin(
+        endpoint: str,
+        params: dict[str, Any],
+        call: Any,
+        *,
+        ttl_override: int | None = None,
+    ) -> Any:
         await response_cache.init()
         cache_key, cache_params = _ckey_phishin(endpoint, **params)
-        hit = await response_cache.get(cache_key, cache_params)
+        hit = await response_cache.get(cache_key, cache_params, ttl_override=ttl_override)
         if hit is not None:
             return hit
         payload = await call()
@@ -732,17 +744,28 @@ def build_server(
                 logger.exception(
                     "vault get_show failed; falling back to live", extra={"date_or_id": date_or_id}
                 )
+        # A live read of a show inside the hot window (setlist still being
+        # typed in on phish.net) gets a short cache TTL so frequent polls see
+        # updates within ~90s instead of a frozen 24h snapshot. Historical
+        # reads keep the default TTL.
+        hot_ttl = (
+            settings.hot_window_cache_ttl_seconds
+            if is_date and _is_hot_window(date_or_id)
+            else None
+        )
         try:
             if is_date:
                 show_payload = await _cached_phishnet(
                     "get_show_by_date",
                     {"date": date_or_id},
                     lambda: pn.get_show_by_date(date_or_id),
+                    ttl_override=hot_ttl,
                 )
                 setlist_payload = await _cached_phishnet(
                     "get_setlist_by_date",
                     {"date": date_or_id},
                     lambda: pn.get_setlist_by_date(date_or_id),
+                    ttl_override=hot_ttl,
                 )
             else:
                 show_payload = await _cached_phishnet(
@@ -759,10 +782,16 @@ def build_server(
                 )
                 setlist_payload = []
                 if date_for_setlist:
+                    setlist_hot_ttl = (
+                        settings.hot_window_cache_ttl_seconds
+                        if _is_hot_window(date_for_setlist)
+                        else None
+                    )
                     setlist_payload = await _cached_phishnet(
                         "get_setlist_by_date",
                         {"date": date_for_setlist},
                         lambda: pn.get_setlist_by_date(date_for_setlist),
+                        ttl_override=setlist_hot_ttl,
                     )
             rows = show_payload if isinstance(show_payload, list) else [show_payload]
             if not rows:
@@ -795,9 +824,14 @@ def build_server(
             except Exception:
                 logger.exception("vault recent_shows failed; falling back to live")
         params: dict[str, Any] = {"order_by": "showdate.desc", "limit": capped}
+        # recent_shows always surfaces the newest show, which may be in
+        # progress; short-TTL it so a same-night addition isn't frozen for 24h.
         try:
             payload = await _cached_phishnet(
-                "recent_shows", params, lambda: pn.search_shows(params)
+                "recent_shows",
+                params,
+                lambda: pn.search_shows(params),
+                ttl_override=settings.hot_window_cache_ttl_seconds,
             )
             rows_live = payload if isinstance(payload, list) else []
             # Sort defensively: stub may not respect order_by.
@@ -1058,12 +1092,19 @@ def build_server(
                 return _ok([_vault_review(row) for row in rows])
             except Exception:
                 logger.exception("vault get_reviews failed; falling back to live")
+        # Reviews for a same-night show trickle in live; short-TTL the hot path.
+        reviews_hot_ttl = (
+            settings.hot_window_cache_ttl_seconds
+            if is_date and _is_hot_window(show_id_or_date)
+            else None
+        )
         try:
             if is_date:
                 payload = await _cached_phishnet(
                     "get_reviews_by_date",
                     {"date": show_id_or_date},
                     lambda: pn.reviews_by_date(show_id_or_date),
+                    ttl_override=reviews_hot_ttl,
                 )
             else:
                 payload = await _cached_phishnet(
@@ -1114,11 +1155,19 @@ def build_server(
                 logger.exception(
                     "vault get_audio failed; falling back to live", extra={"key": show_id_or_date}
                 )
+        # Same hot-window short-TTL treatment as get_show: a same-night audio
+        # bundle is still being uploaded track-by-track on phish.in.
+        audio_hot_ttl = (
+            settings.hot_window_cache_ttl_seconds
+            if is_date_key and _is_hot_window(show_id_or_date)
+            else None
+        )
         try:
             payload = await _cached_phishin(
                 "get_show",
                 {"key": show_id_or_date},
                 lambda: pi.get_show(show_id_or_date),
+                ttl_override=audio_hot_ttl,
             )
             if not payload:
                 return _err(f"show not found: {show_id_or_date}", "NOT_FOUND")

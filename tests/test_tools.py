@@ -674,3 +674,133 @@ async def test_validate_song_slugs_all_unknown(server: Any) -> None:
     sv = SlugValidation(**body["data"])
     assert sv.valid == []
     assert sv.unknown == ["nope-1", "nope-2"]
+
+
+# ---------------------------------------------------------------------------
+# Hot-window short-TTL cache behavior
+#
+# On show night, phish.net's setlist is still being typed in. The live read
+# path must use HOT_WINDOW_CACHE_TTL_SECONDS so frequent polls see fresh data,
+# while historical reads keep the 24h CACHE_TTL_SECONDS. We assert on the
+# ttl_override threaded into ResponseCache.get rather than wall-clock waiting.
+# ---------------------------------------------------------------------------
+
+
+class _SpyCache(ResponseCache):
+    """ResponseCache that records the ttl_override seen per endpoint."""
+
+    def __init__(self, db_path: str, ttl_seconds: int) -> None:
+        super().__init__(db_path=db_path, ttl_seconds=ttl_seconds)
+        self.ttl_overrides: list[tuple[str, int | None]] = []
+
+    async def get(
+        self,
+        endpoint: str,
+        params: Any,
+        ttl_override: int | None = None,
+    ) -> Any:
+        self.ttl_overrides.append((endpoint, ttl_override))
+        return await super().get(endpoint, params, ttl_override=ttl_override)
+
+
+class _FakePhishNet:
+    """Minimal _PhishNetLike stub returning one show row for any date."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def get_show_by_date(self, date: str) -> Any:
+        self.calls.append(date)
+        return [{"showid": "999", "showdate": date, "venue": "Test Arena"}]
+
+    async def get_setlist_by_date(self, date: str) -> Any:
+        return [{"set": "1", "position": 1, "slug": "tweezer", "song": "Tweezer", "trans_mark": ""}]
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _real_settings_with_hot_ttl(stub_settings: Settings) -> Settings:
+    """stub_settings cloned to real-ish mode with an explicit hot-window TTL."""
+    return stub_settings.model_copy(
+        update={
+            "hot_window_cache_ttl_seconds": 90,
+            "cache_ttl_seconds": 86400,
+            "vault_hot_window_hours": 24,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_hot_window_get_show_uses_short_ttl(stub_settings: Settings) -> None:
+    """A show inside the 24h hot window reads live with the 90s override."""
+    from datetime import UTC, datetime
+
+    settings = _real_settings_with_hot_ttl(stub_settings)
+    cache = _SpyCache(db_path=settings.cache_db_path, ttl_seconds=settings.cache_ttl_seconds)
+    fake_pn = _FakePhishNet()
+    server = build_server(
+        settings,
+        phishnet_client=fake_pn,
+        cache=cache,
+        phishnet_throttle=TokenBucket(rps=100),
+        phishin_throttle=TokenBucket(rps=100),
+    )
+    today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+    body = await _call(server, "get_show", date_or_id=today)
+    show = Show(**body["data"])
+    assert show.date == today
+    # Every cache read for this hot-window date carried the 90s override.
+    show_reads = [o for ep, o in cache.ttl_overrides if ep.startswith("phishnet:get_show")]
+    setlist_reads = [o for ep, o in cache.ttl_overrides if ep.startswith("phishnet:get_setlist")]
+    assert show_reads and all(o == 90 for o in show_reads)
+    assert setlist_reads and all(o == 90 for o in setlist_reads)
+
+
+@pytest.mark.asyncio
+async def test_historical_get_show_uses_default_ttl(stub_settings: Settings) -> None:
+    """A 1995 show reads live with no override (ttl_override is None => 24h)."""
+    settings = _real_settings_with_hot_ttl(stub_settings)
+    cache = _SpyCache(db_path=settings.cache_db_path, ttl_seconds=settings.cache_ttl_seconds)
+    fake_pn = _FakePhishNet()
+    server = build_server(
+        settings,
+        phishnet_client=fake_pn,
+        cache=cache,
+        phishnet_throttle=TokenBucket(rps=100),
+        phishin_throttle=TokenBucket(rps=100),
+    )
+    body = await _call(server, "get_show", date_or_id="1995-12-30")
+    assert body["data"]["date"] == "1995-12-30"
+    reads = [o for ep, o in cache.ttl_overrides if ep.startswith("phishnet:get_")]
+    assert reads and all(o is None for o in reads)
+
+
+@pytest.mark.asyncio
+async def test_recent_shows_always_short_ttl(stub_settings: Settings) -> None:
+    """recent_shows always short-TTLs its live read (newest show may be live)."""
+    settings = _real_settings_with_hot_ttl(stub_settings)
+    cache = _SpyCache(db_path=settings.cache_db_path, ttl_seconds=settings.cache_ttl_seconds)
+
+    class _RecentPN(_FakePhishNet):
+        async def search_shows(self, params: Any) -> Any:
+            return [{"showid": "1", "showdate": "2024-12-31", "venue": "MSG"}]
+
+    server = build_server(
+        settings,
+        phishnet_client=_RecentPN(),
+        cache=cache,
+        phishnet_throttle=TokenBucket(rps=100),
+        phishin_throttle=TokenBucket(rps=100),
+    )
+    await _call(server, "recent_shows", limit=5)
+    recent_reads = [o for ep, o in cache.ttl_overrides if ep == "phishnet:recent_shows"]
+    assert recent_reads and all(o == 90 for o in recent_reads)
+
+
+@pytest.mark.asyncio
+async def test_config_exposes_hot_window_ttl_default() -> None:
+    """The new setting defaults to 90s and is surfaced in safe_repr for logging."""
+    s = Settings(stub_mode=True)
+    assert s.hot_window_cache_ttl_seconds == 90
+    assert s.safe_repr()["hot_window_cache_ttl_seconds"] == 90

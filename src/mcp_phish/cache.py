@@ -72,10 +72,24 @@ class ResponseCache:
             )
             await db.commit()
 
-    async def get(self, endpoint: str, params: Mapping[str, Any]) -> Any | None:
-        """Return parsed JSON if a fresh entry exists, else None."""
+    async def get(
+        self,
+        endpoint: str,
+        params: Mapping[str, Any],
+        ttl_override: int | None = None,
+    ) -> Any | None:
+        """Return parsed JSON if a fresh entry exists, else None.
+
+        ``ttl_override`` lets a single call use a shorter (or longer) freshness
+        window than the instance default. The hot-window read path passes a
+        small override so frequent polls of an in-progress show see upstream
+        updates within a couple of minutes instead of being pinned to the
+        24h default. The stored entry is untouched; only the freshness cutoff
+        for this read changes.
+        """
         params_hash = _hash_params(dict(params))
-        cutoff = int(time.time()) - self.ttl_seconds
+        ttl = self.ttl_seconds if ttl_override is None else ttl_override
+        cutoff = int(time.time()) - ttl
         async with (
             aiosqlite.connect(self.db_path) as db,
             db.execute(

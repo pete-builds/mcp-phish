@@ -54,6 +54,33 @@ async def test_ttl_expiry(temp_cache_path: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ttl_override_expires_before_instance_ttl(temp_cache_path: str) -> None:
+    """A short ttl_override treats an entry as stale even though the 24h
+    instance TTL would still consider it fresh."""
+    cache = ResponseCache(db_path=temp_cache_path, ttl_seconds=86400)
+    await cache.init()
+    await cache.put("ep", {"k": "v"}, {"hello": "world"})
+    # Default TTL: still a hit.
+    assert await cache.get("ep", {"k": "v"}) == {"hello": "world"}
+    # 1s override after a >1s wait: treated as a miss.
+    await asyncio.sleep(2.5)
+    assert await cache.get("ep", {"k": "v"}, ttl_override=1) is None
+    # The default-TTL read is unaffected — same entry is still fresh.
+    assert await cache.get("ep", {"k": "v"}) == {"hello": "world"}
+
+
+@pytest.mark.asyncio
+async def test_ttl_override_none_uses_instance_ttl(temp_cache_path: str) -> None:
+    """ttl_override=None is identical to the default freshness window."""
+    cache = ResponseCache(db_path=temp_cache_path, ttl_seconds=1)
+    await cache.init()
+    await cache.put("ep", {"k": "v"}, {"v": 1})
+    assert await cache.get("ep", {"k": "v"}, ttl_override=None) == {"v": 1}
+    await asyncio.sleep(2.5)
+    assert await cache.get("ep", {"k": "v"}, ttl_override=None) is None
+
+
+@pytest.mark.asyncio
 async def test_size_bytes_grows_after_put(empty_cache: ResponseCache) -> None:
     """SQLite allocates pages in 4KB chunks; write enough to span more than one."""
     await empty_cache.init()

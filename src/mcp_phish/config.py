@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     cache_db_path: str = Field(default="/data/phish-cache.db")
     cache_ttl_seconds: int = Field(default=86400, ge=60, le=7 * 86400)
+    hot_window_cache_ttl_seconds: int = Field(
+        default=90,
+        ge=1,
+        le=86400,
+        description=(
+            "Short cache TTL applied to live reads of shows inside the hot window "
+            "(see VAULT_HOT_WINDOW_HOURS). On show night a setlist is typed in live "
+            "on phish.net, so a long TTL would freeze a partial snapshot for hours. "
+            "This keeps frequent polls fresh while still absorbing burst traffic. "
+            "Non-hot (historical) live reads keep CACHE_TTL_SECONDS."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # Per-instance throttle (requests/second)
@@ -133,6 +145,7 @@ class Settings(BaseSettings):
             "phishin_base_url": self.phishin_base_url,
             "cache_db_path": self.cache_db_path,
             "cache_ttl_seconds": self.cache_ttl_seconds,
+            "hot_window_cache_ttl_seconds": self.hot_window_cache_ttl_seconds,
             "throttle_phishnet_rps": self.throttle_phishnet_rps,
             "throttle_phishin_rps": self.throttle_phishin_rps,
             "mcp_host": self.mcp_host,
