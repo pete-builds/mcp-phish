@@ -6,6 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (internal refactor — no behavior change)
+
+- **Split the `server.py` god-file into data-domain modules.** The single
+  1437-line `build_server` factory (15 `@mcp.tool()` defs plus ~30 projection
+  helpers) is now a thin `build_server` + register-modules shell (~150 lines).
+  Tool definitions moved to `modules/{shows,songs,audio,extras,health}.py`,
+  each exposing a `register(mcp, ctx)` entrypoint dispatched by
+  `modules/__init__.py:register_modules`. The pure row→model projection
+  functions (`_phishnet_*`, `_phishin_*`, `_vault_*`, `_safe_*`) and the client
+  protocols live in `mappers.py`; the response-envelope helpers (`_ok`, `_err`,
+  `_to_jsonable`) live in `_common.py`. Shared runtime state (clients, cache,
+  throttles, vault wiring, the cache-fetch and hot-window helpers) is bundled
+  into `_context.ServerContext`. Every tool is wrapped in an `@audited(...)`
+  decorator (`modules/_audit.py`) that emits a debug audit record per call,
+  mirroring the mcp-unifi module pattern. The public tool surface, names,
+  signatures, return shapes, and `build_server` signature are byte-identical;
+  all 143 tests pass unchanged.
+
+### Fixed
+
+- **Dockerfile Python version drift.** Both build stages were pinned to
+  `python:3.14-slim` while `requirements.lock` is compiled for Python 3.13
+  (`uv pip compile ... --python-version 3.13`). Pinned the image back to
+  `python:3.13-slim` so the runtime matches the lockfile. Dependabot will
+  refresh the digest on its next weekly run.
+
 ### Added (batch validation + community aliases)
 
 - **`validate_song_slugs(slugs)` tool.** Partitions a list of up to 50
