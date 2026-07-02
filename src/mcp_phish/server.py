@@ -364,12 +364,14 @@ def _vault_show_full(show_row: Any, setlist_rows: list[Any]) -> Show:
 
 
 def _vault_song_summary(row: Any) -> SongSummary:
+    gap = row.get("gap_current")
     return SongSummary(
         slug=_safe_str(row.get("slug")),
         title=_safe_str(row.get("title")),
         artist=row.get("artist") or None,
         original=bool(row.get("original", True)),
         times_played=_safe_int(row.get("times_played")),
+        gap=_safe_int(gap) if gap is not None else None,
     )
 
 

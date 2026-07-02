@@ -200,7 +200,7 @@ class VaultReader:
                 await conn.fetch(
                     """
                     SELECT DISTINCT s.slug, s.title, s.alias, s.original,
-                                    s.artist,
+                                    s.artist, s.gap_current,
                                     s.tracks_count AS times_played
                     FROM   songs s
                     LEFT JOIN song_aliases_local a ON a.song_slug = s.slug
