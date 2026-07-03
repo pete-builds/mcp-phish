@@ -105,6 +105,7 @@ class SongSummary(BaseModel):
     artist: str | None = None
     original: bool = True
     times_played: int = 0
+    gap: int | None = None
 
 
 class Song(BaseModel):
