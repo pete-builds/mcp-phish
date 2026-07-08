@@ -32,6 +32,7 @@ from mcp_phish.clients.phishin import PhishInError
 from mcp_phish.clients.phishnet import PhishNetError
 from mcp_phish.clients.stubs import StubPhishInClient, StubPhishNetClient
 from mcp_phish.config import Settings, load_settings
+from mcp_phish.hotwindow import is_hot as hot_is_hot
 from mcp_phish.logging_setup import configure_logging
 from mcp_phish.models import (
     CacheHealth,
@@ -600,15 +601,10 @@ def build_server(
         return VaultReader(_lazy_pool_holder[0])
 
     def _is_hot_window(date_str: str) -> bool:
-        """Return True if show date is within vault_hot_window_hours of now."""
-        try:
-            show_dt = datetime.fromisoformat(date_str)
-            if show_dt.tzinfo is None:
-                show_dt = show_dt.replace(tzinfo=UTC)
-            age_hours = (datetime.now(tz=UTC) - show_dt).total_seconds() / 3600
-            return age_hours < settings.vault_hot_window_hours
-        except (ValueError, OverflowError):
-            return False
+        """Return True if the show should be read live (see mcp_phish.hotwindow)."""
+        return hot_is_hot(
+            date_str, settings.vault_hot_window_hours, datetime.now(tz=UTC)
+        )
 
     mcp = FastMCP("Phish")
     started_at = time.time()
