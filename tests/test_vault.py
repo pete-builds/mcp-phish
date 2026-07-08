@@ -388,6 +388,50 @@ async def test_songs_by_gap_skips_null_gap(reader: VaultReader, fake_conn: _Fake
     assert limit_arg == 8
 
 
+@pytest.mark.asyncio
+async def test_stats_overview_computes_average_and_excludes(
+    reader: VaultReader, fake_conn: _FakeConn
+) -> None:
+    fake_conn.fetchrow.return_value = {
+        "total_songs_tracked": 979,
+        "distinct_songs_played": 960,
+        "total_performances": 40,
+        "played_shows": 2,
+        "first_show_date": None,
+        "last_show_date": None,
+    }
+    fake_conn.fetch.return_value = []  # empty ranked lists for all five slices
+    out = await reader.stats_overview(top_n=10)
+    # avg = total_performances / played_shows = 40 / 2 = 20.0
+    assert out["avg_songs_per_show"] == 20.0
+    assert out["total_shows"] == 2
+    assert out["total_songs_tracked"] == 979
+    assert out["distinct_songs_played"] == 960
+    assert out["most_played"] == []
+    assert out["longest_shows"] == []
+    # Performance/show totals must exclude non-stats tracks.
+    headline_sql = fake_conn.fetchrow.await_args.args[0]
+    assert "NOT t.exclude_from_stats" in headline_sql
+    assert "NOT exclude_from_stats" in headline_sql
+
+
+@pytest.mark.asyncio
+async def test_stats_overview_zero_shows_no_divide_by_zero(
+    reader: VaultReader, fake_conn: _FakeConn
+) -> None:
+    fake_conn.fetchrow.return_value = {
+        "total_songs_tracked": 0,
+        "distinct_songs_played": 0,
+        "total_performances": 0,
+        "played_shows": 0,
+        "first_show_date": None,
+        "last_show_date": None,
+    }
+    fake_conn.fetch.return_value = []
+    out = await reader.stats_overview(top_n=10)
+    assert out["avg_songs_per_show"] == 0.0
+
+
 # ---------------------------------------------------------------------------
 # ETL health
 # ---------------------------------------------------------------------------

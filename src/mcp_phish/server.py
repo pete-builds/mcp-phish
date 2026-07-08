@@ -36,7 +36,9 @@ from mcp_phish.hotwindow import is_hot as hot_is_hot
 from mcp_phish.logging_setup import configure_logging
 from mcp_phish.models import (
     CacheHealth,
+    DebutSong,
     Health,
+    LongShow,
     NotableJam,
     Performance,
     Review,
@@ -48,6 +50,8 @@ from mcp_phish.models import (
     Song,
     SongGap,
     SongSummary,
+    StatsOverview,
+    TopSong,
     Track,
     UpstreamHealth,
     VaultHealth,
@@ -602,9 +606,7 @@ def build_server(
 
     def _is_hot_window(date_str: str) -> bool:
         """Return True if the show should be read live (see mcp_phish.hotwindow)."""
-        return hot_is_hot(
-            date_str, settings.vault_hot_window_hours, datetime.now(tz=UTC)
-        )
+        return hot_is_hot(date_str, settings.vault_hot_window_hours, datetime.now(tz=UTC))
 
     mcp = FastMCP("Phish")
     started_at = time.time()
@@ -1408,6 +1410,93 @@ def build_server(
             return _ok([_vault_song_gap(row) for row in rows])
         except Exception as exc:
             logger.exception("songs_by_gap failed")
+            return _err(str(exc), "VAULT_ERROR")
+
+    @mcp.tool()
+    async def stats_overview(top_n: int = 10) -> str:
+        """Catalog-wide Phish statistics in one read-only roll-up.
+
+        Aggregates the whole setlist corpus: total shows, total songs tracked,
+        distinct songs ever played, average songs per show, plus ranked slices
+        for most-played songs, biggest current gaps (bust-out candidates),
+        rarest songs, recent debuts, and the longest shows by song count.
+
+        Args:
+            top_n: Length of each ranked list (most-played, gaps, rarest,
+                debuts, longest shows). Default 10, capped at 50.
+
+        Returns:
+            JSON ``{"data": StatsOverview}``. StatsOverview has
+            ``total_shows, total_songs_tracked, distinct_songs_played,
+            total_performances, avg_songs_per_show, first_show_date,
+            last_show_date, most_played[], biggest_gaps[], rarest_songs[],
+            recent_debuts[], longest_shows[]``.
+
+        Vault-only. Returns ``VAULT_DISABLED`` error if vault is not enabled.
+        Idempotent. Example: ``stats_overview(top_n=10)``.
+        """
+        vr = await _get_vault_reader()
+        if vr is None:
+            return _err("stats_overview requires vault (VAULT_ENABLED=true)", "VAULT_DISABLED")
+        try:
+            raw = await vr.stats_overview(top_n=top_n)
+            report = StatsOverview(
+                total_shows=_safe_int(raw.get("total_shows")),
+                total_songs_tracked=_safe_int(raw.get("total_songs_tracked")),
+                distinct_songs_played=_safe_int(raw.get("distinct_songs_played")),
+                total_performances=_safe_int(raw.get("total_performances")),
+                avg_songs_per_show=_safe_float(raw.get("avg_songs_per_show")) or 0.0,
+                first_show_date=_safe_str(raw.get("first_show_date")) or None,
+                last_show_date=_safe_str(raw.get("last_show_date")) or None,
+                most_played=[
+                    TopSong(
+                        slug=_safe_str(r.get("slug")),
+                        title=_safe_str(r.get("title")),
+                        times_played=_safe_int(r.get("times_played")),
+                    )
+                    for r in raw.get("most_played", [])
+                ],
+                biggest_gaps=[
+                    SongGap(
+                        slug=_safe_str(r.get("slug")),
+                        title=_safe_str(r.get("title")),
+                        gap_current=_safe_int(r.get("gap_current")),
+                        times_played=_safe_int(r.get("times_played")),
+                        last_played_date=_safe_str(r.get("last_play_date")) or None,
+                    )
+                    for r in raw.get("biggest_gaps", [])
+                ],
+                rarest_songs=[
+                    TopSong(
+                        slug=_safe_str(r.get("slug")),
+                        title=_safe_str(r.get("title")),
+                        times_played=_safe_int(r.get("times_played")),
+                    )
+                    for r in raw.get("rarest_songs", [])
+                ],
+                recent_debuts=[
+                    DebutSong(
+                        slug=_safe_str(r.get("slug")),
+                        title=_safe_str(r.get("title")),
+                        debut_date=_safe_str(r.get("debut_date")) or None,
+                        times_played=_safe_int(r.get("times_played")),
+                    )
+                    for r in raw.get("recent_debuts", [])
+                ],
+                longest_shows=[
+                    LongShow(
+                        show_id=_safe_str(r.get("show_id")),
+                        date=_safe_str(r.get("date")),
+                        venue_name=_safe_str(r.get("venue_name")),
+                        location=_safe_str(r.get("location")),
+                        song_count=_safe_int(r.get("song_count")),
+                    )
+                    for r in raw.get("longest_shows", [])
+                ],
+            )
+            return _ok(report)
+        except Exception as exc:
+            logger.exception("stats_overview failed")
             return _err(str(exc), "VAULT_ERROR")
 
     return mcp
