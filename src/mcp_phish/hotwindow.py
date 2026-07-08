@@ -36,8 +36,6 @@ def is_hot(date_str: str, window_hours: float, now: datetime) -> bool:
         show_date = datetime.fromisoformat(date_str).date()
     except (ValueError, OverflowError):
         return False
-    end_of_show_day = datetime.combine(
-        show_date + timedelta(days=1), time.min, tzinfo=SHOW_DAY_TZ
-    )
+    end_of_show_day = datetime.combine(show_date + timedelta(days=1), time.min, tzinfo=SHOW_DAY_TZ)
     age_hours = (now - end_of_show_day).total_seconds() / 3600
     return age_hours < window_hours

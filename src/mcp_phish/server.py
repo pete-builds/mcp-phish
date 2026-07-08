@@ -36,10 +36,10 @@ from mcp_phish.hotwindow import is_hot as hot_is_hot
 from mcp_phish.logging_setup import configure_logging
 from mcp_phish.models import (
     CacheHealth,
-    Health,
-    NotableJam,
     DebutSong,
+    Health,
     LongShow,
+    NotableJam,
     Performance,
     Review,
     SetlistEntry,
@@ -606,9 +606,7 @@ def build_server(
 
     def _is_hot_window(date_str: str) -> bool:
         """Return True if the show should be read live (see mcp_phish.hotwindow)."""
-        return hot_is_hot(
-            date_str, settings.vault_hot_window_hours, datetime.now(tz=UTC)
-        )
+        return hot_is_hot(date_str, settings.vault_hot_window_hours, datetime.now(tz=UTC))
 
     mcp = FastMCP("Phish")
     started_at = time.time()
@@ -1439,9 +1437,7 @@ def build_server(
         """
         vr = await _get_vault_reader()
         if vr is None:
-            return _err(
-                "stats_overview requires vault (VAULT_ENABLED=true)", "VAULT_DISABLED"
-            )
+            return _err("stats_overview requires vault (VAULT_ENABLED=true)", "VAULT_DISABLED")
         try:
             raw = await vr.stats_overview(top_n=top_n)
             report = StatsOverview(
