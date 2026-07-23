@@ -9,6 +9,6 @@ asyncpg>=0.29
 
 # Direct pins to patch transitive-dep CVEs flagged by Trivy (auth stack)
 pyjwt==2.13.0          # CVE-2026-48526 (auth bypass)
-joserfc==1.7.3         # CVE-2026-49852 (HMAC empty-key)
+joserfc==1.7.4         # CVE-2026-49852 (HMAC empty-key)
 python-multipart==0.0.32  # CVE-2026-53539
 cryptography==48.0.1   # GHSA-537c (OpenSSL in wheels)
