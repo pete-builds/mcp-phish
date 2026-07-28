@@ -106,8 +106,11 @@ class Settings(BaseSettings):
         default=36,
         ge=1,
         description=(
-            "Refuse to serve vault data if the last successful ETL run is older "
-            "than this many hours. Health reports 'degraded'."
+            "Staleness threshold for health reporting only. If the last successful "
+            "ETL run is older than this many hours, health() reports the vault as "
+            "stale and its status as 'degraded'. This does NOT gate reads: tools "
+            "continue serving vault rows past this threshold. Callers that need a "
+            "freshness guarantee must check health() themselves."
         ),
     )
     pg_host: str = Field(default="postgres")

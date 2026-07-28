@@ -575,6 +575,67 @@ async def test_health_marks_vault_stale_when_etl_too_old(stub_settings: Settings
     assert health.vault.stale is True
 
 
+@pytest.mark.asyncio
+async def test_stale_vault_still_serves_reads(stub_settings: Settings) -> None:
+    """vault_max_stale_hours reports staleness; it does not gate reads.
+
+    Pins the documented behavior of the setting. Its description once claimed it
+    would "refuse to serve vault data" past the threshold, which was never
+    implemented: the value is read only by health(). If a freshness gate is ever
+    added, this test is the one that should fail and force the docs to change
+    with it.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    finished = datetime.now(tz=UTC) - timedelta(hours=72)  # > default 36h max
+    show_row = {
+        "date": "1995-12-30",
+        "show_id_phishin": 412412,
+        "show_id_phishnet": 1253,
+        "venue_slug": "madison-square-garden",
+        "venue_name": "Madison Square Garden",
+        "city": "New York",
+        "state": "NY",
+        "country": "USA",
+        "location": "New York, NY",
+        "tour_name": "1995 NYE Run",
+    }
+    setlist_rows = [
+        {
+            "set_label": "1",
+            "position": 1,
+            "song_slug": "reba",
+            "song_name": "Reba",
+            "transition": ">",
+            "footnote": "",
+        }
+    ]
+    vault = _make_vault_stub(
+        get_show=(show_row, setlist_rows),
+        last_etl_run={
+            "id": 1,
+            "started_at": finished,
+            "finished_at": finished,
+            "mode": "incremental",
+            "status": "ok",
+            "rows_added": 0,
+            "rows_updated": 0,
+        },
+    )
+    server = _build(_vault_settings(stub_settings), vault_reader=vault)
+
+    # Health agrees the vault is stale...
+    health = Health(**(await _call(server, "health"))["data"])
+    assert health.vault.stale is True
+
+    # ...and the read is served anyway, from the vault, with no error.
+    body = await _call(server, "get_show", date_or_id="1995-12-30")
+    assert "error" not in body
+    show = Show(**body["data"])
+    assert show.venue.name == "Madison Square Garden"
+    vault.get_show.assert_awaited_once_with("1995-12-30")
+
+
 # ---------------------------------------------------------------------------
 # validate_song_slugs
 # ---------------------------------------------------------------------------
