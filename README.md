@@ -8,9 +8,9 @@
 An [MCP server](https://modelcontextprotocol.io/) that wraps the
 [api.phish.net v5](https://api.phish.net/) and
 [phish.in v2](https://phish.in/) APIs behind a single typed tool surface.
-Twelve tools across setlists, songs, jam-charts, reviews, and audio. Every
-response is shaped through frozen Pydantic models so the wire format stays
-stable across upstream API drift.
+Sixteen tools across setlists, songs, jam-charts, reviews, audio, venues, and
+catalog statistics. Every response is shaped through frozen Pydantic models so
+the wire format stays stable across upstream API drift.
 
 Built on FastMCP with Streamable HTTP transport. Designed to run on a trusted
 LAN or behind a Tailscale ACL — there is no built-in MCP-level auth.
@@ -58,20 +58,30 @@ docker run --rm \
 
 ## Tool reference
 
+Source column reads: **vault → API** means the tool prefers the Postgres vault
+and falls through to the live API inside the hot window (or when the vault is
+disabled). **vault only** means the tool has no upstream equivalent and returns
+`VAULT_DISABLED` when the vault is off. See
+[Vault read path](#vault-read-path).
+
 | Tool | Source | What it does |
 |---|---|---|
-| `search_shows` | phish.net | Search shows by year + venue + city/state/country. |
-| `get_show` | phish.net | Full show: setlist, ratings, reviews count, venue. |
-| `recent_shows` | phish.net | N most recent shows, most-recent-first. |
-| `search_songs` | phish.net | Search the song catalog by title fragment. |
-| `get_song` | phish.net | One song record: debut, last play, gap, total. |
-| `song_history` | phish.net | Every performance of a song, most-recent-first. |
-| `jam_chart` | phish.net | Editorially flagged notable jams. |
-| `get_reviews` | phish.net | User reviews for a show. |
-| `get_audio` | phish.in | Track list + MP3 URLs + durations for a show. |
-| `get_track` | phish.in | One audio track by id. |
-| `search_audio_tracks` | phish.in | Every recorded version of one song slug. |
-| `health` | meta | Server status, throttle state, cache stats. |
+| `search_shows` | vault → phish.net | Search shows by year + venue + city/state/country. |
+| `get_show` | vault → phish.net | Full show: setlist, ratings, reviews count, venue. |
+| `recent_shows` | vault → phish.net | N most recent shows, most-recent-first. |
+| `search_songs` | vault → phish.net | Search the song catalog by title fragment or community nickname. Surfaces current gap. |
+| `get_song` | vault → phish.net | One song record: debut, last play, gap, total. |
+| `validate_song_slugs` | vault → phish.net | Partition 1-50 candidate slugs into `valid` and `unknown`. One round-trip on vault. |
+| `song_history` | vault → phish.net | Every performance of a song, most-recent-first. |
+| `jam_chart` | vault → phish.net | Editorially flagged notable jams. |
+| `get_reviews` | vault → phish.net | User reviews for a show. |
+| `get_audio` | vault → phish.in | Track list + MP3 URLs + durations for a show. |
+| `get_track` | vault → phish.in | One audio track by id. |
+| `search_audio_tracks` | vault → phish.in | Every recorded version of one song slug. |
+| `venue_history` | vault only | All shows at a venue, most recent first. |
+| `songs_by_gap` | vault only | Songs ranked by current gap, descending. Bust-out candidates. |
+| `stats_overview` | vault only | Catalog-wide roll-up: totals, most-played, biggest gaps, rarest, recent debuts, longest shows. |
+| `health` | meta | Server status, throttle state, cache stats, vault freshness. |
 
 Every tool returns a JSON string with the standard envelope:
 
@@ -90,20 +100,58 @@ or, on failure:
 ```
 
 The Pydantic models in [`src/mcp_phish/models.py`](src/mcp_phish/models.py)
-(``ShowSummary``, ``Show``, ``SetlistEntry``, ``Song``, ``Performance``,
-``NotableJam``, ``Review``, ``Track``, ``ShowAudio``, ``Health``) are the
-public contract. They are frozen with ``extra="forbid"`` so any upstream drift
+(``Venue``, ``ShowSummary``, ``Show``, ``SetlistEntry``, ``SongSummary``,
+``Song``, ``Performance``, ``NotableJam``, ``Review``, ``Track``,
+``ShowAudio``, ``VenueShow``, ``SongGap``, ``SlugValidation``, ``TopSong``,
+``DebutSong``, ``LongShow``, ``StatsOverview``, ``Health``) are the public
+contract. They are frozen with ``extra="forbid"`` so any upstream drift
 becomes a validation error rather than a silent shape change.
 
 ## Stub mode vs real mode
 
 | Mode | When to use | Behavior |
 |---|---|---|
-| **Stub** (`STUB_MODE=true`, default) | Development, demos, no API key yet | Realistic mock payloads for a small set of canonical shows (12/30/95 MSG, 11/17/97 Denver, 12/31/24 MSG). Every tool returns the same Pydantic shape it would in real mode. |
+| **Stub** (`STUB_MODE=true`, default) | Development, demos, no API key yet | Realistic mock payloads for a small set of canonical shows (12/30/95 MSG, 11/17/97 Denver, 12/31/24 MSG). Every API-backed tool returns the same Pydantic shape it would in real mode. |
 | **Real** (`STUB_MODE=false`) | Production with a phish.net API key | Talks HTTPS to api.phish.net v5 and phish.in v2. Requires `PHISHNET_API_KEY`; `PHISHIN_API_KEY` is optional. |
 
-Switching modes is a config change, not a code change. Same twelve tools,
+Switching modes is a config change, not a code change. Same sixteen tools,
 same response shapes.
+
+`STUB_MODE` and `VAULT_ENABLED` are independent switches. Stub mode only
+governs the two upstream HTTP clients; it does not stand in for the vault. The
+three vault-only tools (`venue_history`, `songs_by_gap`, `stats_overview`)
+return `VAULT_DISABLED` whenever `VAULT_ENABLED=false`, in stub mode and real
+mode alike.
+
+## Vault read path
+
+Reads are served from a [phish-vault](https://github.com/pete-builds) Postgres
+database when `VAULT_ENABLED=true`, with a live-API fallthrough for shows
+inside the **hot window**. This is implemented and in production, not planned.
+
+How a read resolves:
+
+1. **Vault disabled** (`VAULT_ENABLED=false`, the default) — every tool goes
+   straight to the upstream API exactly as it did before the vault existed.
+   Vault-only tools return `VAULT_DISABLED`.
+2. **Vault enabled, show outside the hot window** — served from Postgres. No
+   upstream call.
+3. **Vault enabled, show inside the hot window** — a setlist is typed into
+   phish.net live during and just after a show, so recent dates bypass the
+   vault and read the API under a short cache TTL
+   (`HOT_WINDOW_CACHE_TTL_SECONDS`) so repeat polls see fresh setlists. The
+   window is anchored to the **end of the show day in US/Eastern**, not
+   midnight UTC, and spans `VAULT_HOT_WINDOW_HOURS`.
+4. **Vault enabled but stale** — if the last successful ETL run is older than
+   `VAULT_MAX_STALE_HOURS`, `health()` reports `vault.stale: true` and an
+   overall status of `degraded`. Note this is a **reporting** signal only:
+   read tools keep serving vault rows regardless of staleness. Monitor
+   `health()` if stale data matters to your client.
+
+Vault rows and API payloads project through separate mappers into the same
+frozen Pydantic models, so the wire format does not tell a client which source
+answered. `health()` reports vault connectivity and ETL freshness when you need
+to know.
 
 ## Caching
 
@@ -143,8 +191,17 @@ present). Pydantic validates at startup and fails fast on invalid values.
 | `PHISHIN_BASE_URL` | string | `https://phish.in/api/v2` | no | Override for testing. |
 | `CACHE_DB_PATH` | string | `/data/phish-cache.db` | no | aiosqlite file path. |
 | `CACHE_TTL_SECONDS` | int | `86400` | no | 24h default. |
+| `HOT_WINDOW_CACHE_TTL_SECONDS` | int | see `config.py` | no | Short TTL applied to live reads inside the hot window so polls see fresh setlists. |
 | `THROTTLE_PHISHNET_RPS` | float | `5.0` | no | Per-second steady rate. |
 | `THROTTLE_PHISHIN_RPS` | float | `10.0` | no | Per-second steady rate. |
+| `VAULT_ENABLED` | bool | `false` | no | When `true`, read tools prefer the Postgres vault. See [Vault read path](#vault-read-path). |
+| `VAULT_HOT_WINDOW_HOURS` | int | see `config.py` | no | Hours after end-of-show-day (ET) during which reads bypass the vault and go live. |
+| `VAULT_MAX_STALE_HOURS` | int | see `config.py` | no | ETL age past which `health()` reports the vault `stale`/`degraded`. Reporting only; does not gate reads. |
+| `PG_HOST` | string | `postgres` | only when vault enabled | phish-vault Postgres host. |
+| `PG_PORT` | int | `5432` | no | Postgres port. |
+| `PG_DB` | string | `phish` | no | Vault database name. |
+| `PG_USER` | string | `phish` | no | Vault role. |
+| `PG_PASSWORD` | secret | `""` | only when vault enabled | Never logged; omitted from `health()`. |
 | `MCP_HOST` | string | `0.0.0.0` | no | Bind address. |
 | `MCP_PORT` | int | `3705` | no | Listen port. |
 | `LOG_LEVEL` | enum | `INFO` | no | One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
@@ -185,28 +242,39 @@ can connect.
 +---------------------+     Streamable HTTP     +---------------------+
 |  MCP Client         |  -------------------->  |  mcp-phish          |
 |  (Claude Code, etc) |  <--------------------  |  (FastMCP server)   |
-+---------------------+                         +----+--------------+-+
-                                                     |              |
-                                                     |              |
-                                                     v              v
-                                          +----------+--+   +-------+--------+
-                                          | api.phish.net|   | phish.in/api/v2|
-                                          |     v5       |   |                |
-                                          +--------------+   +----------------+
-
-                                                     ^
-                                                     |
-                                          +----------+----------+
-                                          | aiosqlite KV cache  |
-                                          |  /data/phish-cache  |
-                                          +---------------------+
++---------------------+                         +----------+----------+
+                                                           |
+                                        VAULT_ENABLED?     |
+                            +------------------------------+
+                            |                              |
+                   true, outside hot window        false, or inside
+                            |                        hot window
+                            v                              |
+                 +----------+----------+                   v
+                 |  phish-vault        |        +----------+----------+
+                 |  Postgres           |        | aiosqlite KV cache  |
+                 |  (nightly ETL)      |        |  /data/phish-cache  |
+                 +---------------------+        +----------+----------+
+                                                           | miss
+                                                           v
+                                            +--------------+--+   +----------------+
+                                            | api.phish.net v5 |   | phish.in/api/v2|
+                                            +------------------+   +----------------+
 ```
 
-mcp-phish is a thin async proxy with a small cache: it translates MCP tool
-calls into upstream REST calls, caches raw responses for the configured TTL,
-and projects them into the public Pydantic shape. It does not store any
-state beyond that cache. It does not call any cloud services other than the
-two phish APIs.
+mcp-phish is an async read proxy over two sources. With the vault disabled it
+is a thin API proxy with a small cache: it translates MCP tool calls into
+upstream REST calls, caches raw responses for the configured TTL, and projects
+them into the public Pydantic shape. With the vault enabled it reads
+[phish-vault](https://github.com/pete-builds) Postgres for everything outside
+the hot window and falls through to the same API path for recent shows.
+
+Either way mcp-phish owns no durable state of its own beyond the KV cache: the
+vault is a separate service hydrated by its own nightly ETL, and mcp-phish only
+ever reads from it (`vault.py` issues `SELECT` and nothing else). Grant the
+`PG_USER` role read-only privileges to enforce that at the database, too. It
+calls no cloud services other than
+the two phish APIs.
 
 ## Security notes
 
@@ -218,8 +286,8 @@ two phish APIs.
   **read-only root filesystem** (`/tmp` is `tmpfs`) and `no-new-privileges`.
 - The `/data` cache volume is the only writable path.
 - Python deps install with `pip --require-hashes` from a hash-locked
-  `requirements.lock`. The base image will be pinned by digest before the
-  first tagged release.
+  `requirements.lock`. Both Dockerfile stages pin the base image by digest,
+  refreshed by Dependabot.
 - Published images are multi-arch (amd64/arm64) with build provenance and
   SBOM via `docker/build-push-action`.
 
@@ -270,15 +338,20 @@ base image, and GitHub Actions versions.
 
 ## Roadmap
 
-This server is **Phase 1** of a larger Phish data project. The Pydantic
-contract documented above will stay byte-identical across the future
-phases.
+This server is part of a larger Phish data project. The Pydantic contract
+documented above stays byte-identical across phases.
 
-- **Phase 2** — Postgres vault + nightly ETL hydration.
-- **Phase 3** — vault-backed read path for this MCP. Hot-window fallthrough
-  reads recent shows live; older reads come from the vault.
-- **Phase 4** — setlist-prediction game (separate repo).
-- **Phase 5** — chat + dashboard UI over MCP (separate repo).
+- **Phase 1 — done.** Typed MCP surface over the phish.net and phish.in APIs,
+  with an aiosqlite response cache and per-upstream throttling.
+- **Phase 2 — done** (separate repo). Postgres vault + nightly ETL hydration.
+- **Phase 3 — done.** Vault-backed read path for this MCP, with hot-window
+  fallthrough so recent shows read live and older reads come from the vault.
+  All sixteen tools consult the vault when `VAULT_ENABLED=true`; three of them
+  (`venue_history`, `songs_by_gap`, `stats_overview`) are vault-only. See
+  [Vault read path](#vault-read-path) for the resolution order and
+  [Configuration](#configuration) for the `VAULT_*` / `PG_*` variables.
+- **Phase 4 — in progress** (separate repo). Setlist-prediction game.
+- **Phase 5 — planned** (separate repo). Chat + dashboard UI over MCP.
 
 Phase status lives at <https://github.com/pete-builds/mcp-phish/issues>.
 
