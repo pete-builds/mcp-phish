@@ -20,7 +20,7 @@ def check() -> int:
     port = os.getenv("MCP_PORT", "3705")
     url = f"http://localhost:{port}/mcp"
     try:
-        urllib.request.urlopen(url, timeout=5)  # noqa: S310 - localhost only
+        urllib.request.urlopen(url, timeout=5)
         return 0
     except urllib.error.HTTPError as exc:
         return 0 if exc.code in _HEALTHY_NON_OK_CODES else 1
