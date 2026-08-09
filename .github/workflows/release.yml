@@ -22,6 +22,40 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify docker-compose.yml points at the version being released
+        # The pinned tag in docker-compose.yml is the only version surface in
+        # this repo. If it does not match the git tag, the release publishes an
+        # image the deploy never pulls. Fail closed: GHCR tags are cheap to
+        # re-push, a compose pointing at the wrong version is not.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet pyyaml
+          python3 - <<'PYEOF'
+          import os
+          import sys
+
+          import yaml
+
+          version = os.environ["REF_NAME"].removeprefix("v")
+          expected = f"ghcr.io/{os.environ['GITHUB_REPOSITORY'].lower()}:{version}"
+
+          # Parse the YAML key rather than grepping the file: the surrounding
+          # comments also contain an image reference, and a text search would
+          # happily match a stale one and pass.
+          with open("docker-compose.yml") as fh:
+              compose = yaml.safe_load(fh)
+
+          actual = compose["services"]["mcp-phish"].get("image")
+          if actual != expected:
+              print(f"::error::docker-compose.yml pins '{actual}', expected '{expected}'")
+              print("::error::Bump the compose image tag in a commit BEFORE cutting the tag.")
+              sys.exit(1)
+
+          print(f"  ok  docker-compose.yml pins {actual}")
+          PYEOF
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 

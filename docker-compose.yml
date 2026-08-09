@@ -6,8 +6,14 @@ x-logging: &default-logging
 
 services:
   mcp-phish:
-    build: .
-    image: mcp-phish:0.1.0
+    # Pulled from GHCR, published by .github/workflows/release.yml on a
+    # v*.*.* tag. Explicit version, NOT :latest, so a restart can never
+    # silently change the running code. The release workflow refuses to
+    # publish unless this tag matches the git tag being released.
+    #
+    # To build locally instead of pulling:
+    #   docker build -t ghcr.io/pete-builds/mcp-phish:0.1.0 .
+    image: ghcr.io/pete-builds/mcp-phish:0.1.0
     container_name: mcp-phish
     restart: unless-stopped
     read_only: true
