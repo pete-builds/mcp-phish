@@ -12,8 +12,8 @@ services:
     # publish unless this tag matches the git tag being released.
     #
     # To build locally instead of pulling:
-    #   docker build -t ghcr.io/pete-builds/mcp-phish:0.1.0 .
-    image: ghcr.io/pete-builds/mcp-phish:0.1.0
+    #   docker build -t ghcr.io/pete-builds/mcp-phish:0.2.0 .
+    image: ghcr.io/pete-builds/mcp-phish:0.2.0
     container_name: mcp-phish
     restart: unless-stopped
     read_only: true

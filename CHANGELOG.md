@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-16
+
 ### Added (batch validation + community aliases)
 
 - **`validate_song_slugs(slugs)` tool.** Partitions a list of up to 50

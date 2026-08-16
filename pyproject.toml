@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-phish"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server wrapping the api.phish.net v5 and phish.in v2 APIs."
 readme = "README.md"
 license = { file = "LICENSE" }
