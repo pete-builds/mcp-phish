@@ -25,6 +25,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from mcp_phish.cache import ResponseCache
 from mcp_phish.config import Settings, load_settings
@@ -75,6 +77,20 @@ def build_server(
         vault_pool=vault_pool,
     )
     mcp = FastMCP("Phish")
+
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_route(_request: Request) -> JSONResponse:
+        """Lightweight liveness endpoint for the Docker HEALTHCHECK.
+
+        Separate from the ``health`` MCP tool below: a bare GET here never
+        touches the ``/mcp`` transport, so it never mints a streamable-http
+        session. Probing ``/mcp`` directly does — the SDK creates a transport
+        session before it returns 4xx, and nothing reaps it, leaking ~40 KB
+        per probe at the standard 30s interval. This route sidesteps that
+        entirely; gate on the 200 status code only, not the body.
+        """
+        return JSONResponse({"status": "ok"})
+
     register_all(mcp, ctx)
     return mcp
 
