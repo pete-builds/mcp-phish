@@ -51,6 +51,21 @@ RUN groupadd --system --gid 1000 mcp \
     && mkdir -p /data \
     && chown -R mcp:mcp /data
 
+# Drop pip from the runtime image. Nothing at runtime uses it: dependencies are
+# built into /wheels in the builder stage and reach this stage via PYTHONPATH,
+# and both the entrypoint and the healthcheck are plain `python -m` calls.
+#
+# This is also the only fix for two recurring Trivy HIGHs. pip ships a vendored
+# dependency set (see pip/_vendor/vendor.txt) that Trivy scans as real packages:
+# msgpack 1.1.2 (GHSA-6v7p-g79w-8964) and setuptools 70.3.0 (CVE-2025-47273).
+# Neither appears in requirements.lock, so no lockfile regeneration can move
+# them, and pip 26.2.1 is already the latest release. Removing the unused
+# component is the fix; pinning around it is not possible.
+RUN python -m pip uninstall -y pip \
+    && rm -rf /usr/local/lib/python3.*/site-packages/pip \
+              /usr/local/lib/python3.*/site-packages/pip-*.dist-info \
+              /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
+
 WORKDIR /app
 COPY --from=builder /wheels /app/site-packages
 RUN chown -R mcp:mcp /app
