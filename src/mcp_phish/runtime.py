@@ -37,6 +37,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("mcp_phish.server")
 
+# --- Tool annotations ---
+# Seventeen tools, every one of them a lookup, and not one writes anything
+# anywhere. That is worth DECLARING rather than leaving to be inferred: an
+# unannotated read-only server and an unannotated server full of delete tools
+# are indistinguishable in the manifest, so a client trying to be careful has
+# to be careful about everything, which in practice means being careful about
+# nothing. Saying "these seventeen are safe" is what makes "that one is not",
+# elsewhere in the fleet, mean something.
+#
+# openWorldHint is True throughout, including `health`. Every read reaches
+# either the phish.net API or the vault, which is a Postgres server on another
+# host, so an answer can differ between two identical calls because the world
+# moved -- not because the call changed it. That is why these are open-world
+# and idempotent at the same time.
+
+#: Reads only. Safe to repeat, safe to call speculatively.
+READ_ONLY = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": True,
+}
+
 __all__ = [
     "PhishInLike",
     "PhishNetLike",
@@ -253,7 +276,7 @@ def build_context(
 def register(mcp: FastMCP, ctx: ServerContext) -> None:
     """Register the ``health`` tool against ``mcp``."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def health() -> str:
         """Report server status: stub mode, upstream throttle state, cache stats.
 

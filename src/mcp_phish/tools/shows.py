@@ -15,7 +15,7 @@ from mcp_phish.mappers import phishnet as pn_map
 from mcp_phish.mappers import vault as vault_map
 from mcp_phish.mappers.coerce import safe_str
 from mcp_phish.responses import err, ok
-from mcp_phish.runtime import ServerContext
+from mcp_phish.runtime import READ_ONLY, ServerContext
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -32,7 +32,7 @@ def _looks_like_date(value: str) -> bool:
 def register(mcp: FastMCP, ctx: ServerContext) -> None:
     """Register the show-domain tools against ``mcp``."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def search_shows(
         year: int | None = None,
         venue: str = "",
@@ -97,7 +97,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             logger.exception("search_shows failed")
             return err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_show(date_or_id: str) -> str:
         """Get a single Phish show with full setlist, ratings, and venue.
 
@@ -175,7 +175,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             code = "NOT_FOUND" if "no show" in str(exc).lower() else "UPSTREAM_DOWN"
             return err(str(exc), code, upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def recent_shows(limit: int = 10) -> str:
         """List the most recent Phish shows.
 
@@ -214,7 +214,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             logger.exception("recent_shows failed")
             return err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_reviews(show_id_or_date: str, limit: int = 25) -> str:
         """Fetch user reviews for a show.
 
@@ -262,7 +262,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             logger.exception("get_reviews failed")
             return err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def venue_history(venue_slug: str, limit: int = 25) -> str:
         """List all shows at a venue, most recent first. Requires vault.
 

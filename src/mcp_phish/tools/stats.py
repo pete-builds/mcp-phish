@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from mcp_phish.mappers import vault as vault_map
 from mcp_phish.responses import err, ok
-from mcp_phish.runtime import ServerContext
+from mcp_phish.runtime import READ_ONLY, ServerContext
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -26,7 +26,7 @@ __all__ = ["register"]
 def register(mcp: FastMCP, ctx: ServerContext) -> None:
     """Register the aggregate-stats tools against ``mcp``."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def stats_overview(top_n: int = 10) -> str:
         """Catalog-wide Phish statistics in one read-only roll-up.
 

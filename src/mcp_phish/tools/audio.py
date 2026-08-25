@@ -14,7 +14,7 @@ from mcp_phish.clients.phishin import PhishInError
 from mcp_phish.mappers import phishin as pi_map
 from mcp_phish.mappers import vault as vault_map
 from mcp_phish.responses import err, ok
-from mcp_phish.runtime import ServerContext
+from mcp_phish.runtime import READ_ONLY, ServerContext
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -27,7 +27,7 @@ __all__ = ["register"]
 def register(mcp: FastMCP, ctx: ServerContext) -> None:
     """Register the audio-domain tools against ``mcp``."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_audio(show_id_or_date: str) -> str:
         """Fetch the audio bundle for a show: track list, MP3 URLs, durations.
 
@@ -78,7 +78,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             code = "NOT_FOUND" if "no show" in str(exc).lower() else "UPSTREAM_DOWN"
             return err(str(exc), code, upstream="phish.in")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_track(track_id: int) -> str:
         """Fetch one phish.in track by its numeric id.
 
@@ -117,7 +117,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             code = "NOT_FOUND" if "no track" in str(exc).lower() else "UPSTREAM_DOWN"
             return err(str(exc), code, upstream="phish.in")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def search_audio_tracks(song_slug: str, limit: int = 20) -> str:
         """Find every phish.in audio track for a given song slug, across shows.
 
