@@ -17,7 +17,7 @@ from mcp_phish.mappers import vault as vault_map
 from mcp_phish.mappers.coerce import safe_str
 from mcp_phish.models import SlugValidation
 from mcp_phish.responses import err, ok
-from mcp_phish.runtime import ServerContext
+from mcp_phish.runtime import READ_ONLY, ServerContext
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -30,7 +30,7 @@ __all__ = ["register"]
 def register(mcp: FastMCP, ctx: ServerContext) -> None:
     """Register the song-domain tools against ``mcp``."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def search_songs(query: str, limit: int = 25) -> str:
         """Search the Phish song catalog by title fragment.
 
@@ -65,7 +65,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             logger.exception("search_songs failed")
             return err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def get_song(slug: str) -> str:
         """Get a single song's catalog record (debut, last play, gap, total).
 
@@ -104,7 +104,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             code = "NOT_FOUND" if "no song" in str(exc).lower() else "UPSTREAM_DOWN"
             return err(str(exc), code, upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def validate_song_slugs(slugs: list[str]) -> str:
         """Partition a list of song slugs into ``valid`` and ``unknown``.
 
@@ -178,7 +178,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
                 )
         return ok(SlugValidation(valid=sorted(valid_live), unknown=unknown_live))
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def song_history(slug: str, limit: int = 50) -> str:
         """List every performance of a song, most-recent first.
 
@@ -217,7 +217,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             logger.exception("song_history failed", extra={"slug": slug})
             return err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def jam_chart(year: int | None = None, limit: int = 50) -> str:
         """Return phish.net's jam-chart entries — editorially flagged notable jams.
 
@@ -252,7 +252,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             logger.exception("jam_chart failed")
             return err(str(exc), "UPSTREAM_DOWN", upstream="phish.net")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def songs_by_gap(limit: int = 25) -> str:
         """List songs ordered by current gap (shows since last play), descending.
 
