@@ -4,9 +4,19 @@ In production we emit JSON via stdlib ``logging`` with a custom formatter so
 log aggregators can parse each record without regex hacks. ``log_format=text``
 falls back to a plain human-readable format for local development.
 
-API keys never appear in logs. The formatter scrubs a small set of well-known
-sensitive keys defensively in case caller code accidentally drops one into
-``extra``.
+API keys are kept out of logs by two separate mechanisms, and it is worth being
+precise about what each one does, because the first sentence here used to claim
+more than the code delivered.
+
+1. The ``httpx`` and ``httpcore`` loggers are pinned to WARNING. httpx logs every
+   request URL at INFO, and phish.net takes its API key as a query parameter, so
+   without this the key was written to stdout on every call.
+2. The formatter scrubs a small set of well-known sensitive keys out of the
+   structured ``extra`` dict, defensively, in case caller code drops one there.
+
+Note the limit of (2): it does **not** scrub the formatted message text. A secret
+interpolated into a log message string is emitted verbatim. Keep secrets out of
+message bodies.
 """
 
 from __future__ import annotations
@@ -111,3 +121,17 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
             )
         )
     root.addHandler(handler)
+
+    # phish.net requires its API key as a query parameter -- the upstream gives us
+    # no header form -- and httpx logs every completed request at INFO including
+    # the full URL. With the root logger at its default INFO, that wrote
+    # apikey=<real key> to stdout on every single call, and into the rotated
+    # docker json-file logs behind it.
+    #
+    # The scrubber above cannot catch it: it walks the structured `extra` dict and
+    # never touches the formatted message text, which is where httpx puts the URL.
+    # Pinning the logger is the fix, and it is the same one phish-vault already
+    # carries (src/phish_vault/logging_setup.py:126-129) against the same API for
+    # the same reason.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
