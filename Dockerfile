@@ -49,9 +49,24 @@ ENV PYTHONUNBUFFERED=1 \
     PATH=/app/site-packages/bin:$PATH
 
 # Apply current Debian security updates on top of the pinned Python base image.
+#
+# The ADD is not decoration and must stay directly above the RUN. CI builds with
+# `cache-from: type=gha`, and this RUN's cache key is just its command string,
+# which never changes -- so buildkit served this layer from cache indefinitely and
+# the "current security updates" above were whatever was current the day the layer
+# was FIRST built. Verified on 2026-08-26: the build logged `#11 CACHED` while the
+# image still shipped libssl3t64 3.5.6-1~deb13u2, three weeks after
+# 3.5.7-1~deb13u2 (CVE-2026-14456) had landed in trixie-security. A layer that
+# claims to apply security updates and silently does not is worse than not having
+# it, because the Trivy gate then fails with nothing in the repo to change.
+#
+# trixie-security's Release file changes whenever a security update is published,
+# so ADDing it makes buildkit invalidate this layer exactly when there is
+# something new to install, and only then.
+ADD https://deb.debian.org/debian-security/dists/trixie-security/Release /tmp/debian-security-release
 RUN apt-get update \
     && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /tmp/debian-security-release /var/lib/apt/lists/*
 
 # Non-root user with pinned UID 1000 (no shell, no home).
 RUN groupadd --system --gid 1000 mcp \
