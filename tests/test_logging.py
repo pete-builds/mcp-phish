@@ -45,3 +45,17 @@ def test_configure_logging_text_mode_is_idempotent() -> None:
     configure_logging(level="WARNING", fmt="text")
     handlers = logging.getLogger().handlers
     assert len(handlers) == 1
+
+
+def test_httpx_logger_is_pinned_to_warning() -> None:
+    """phish.net takes its API key as a query parameter and httpx logs full URLs
+    at INFO, so an unpinned httpx logger wrote the key to stdout on every call.
+    The formatter's scrubber cannot help: it walks `extra`, not the message text.
+    """
+    import logging
+
+    from mcp_phish.logging_setup import configure_logging
+
+    configure_logging(level="INFO", fmt="json")
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
