@@ -2,14 +2,14 @@ fastmcp==3.4.7
 httpx==0.28.1
 uvicorn==0.52.4
 python-dotenv==1.2.3
-pydantic==2.13.4
+pydantic==2.13.5
 pydantic-settings==2.15.0
 aiosqlite==0.22.1
 asyncpg>=0.29
 
 # Direct pins to patch transitive-dep CVEs flagged by Trivy (auth stack)
 pyjwt==2.13.0          # CVE-2026-48526 (auth bypass)
-joserfc==1.7.4         # CVE-2026-49852 (HMAC empty-key)
+joserfc==1.7.5         # CVE-2026-49852 (HMAC empty-key)
 python-multipart==0.0.32  # CVE-2026-53539
-cryptography==50.0.0   # GHSA-537c (OpenSSL in wheels)
+cryptography==50.0.1   # GHSA-537c (OpenSSL in wheels)
 mcp==1.28.1            # CVE-2026-52869, CVE-2026-52870 (fixed 1.27.2), CVE-2026-59950 (fixed 1.28.1)
