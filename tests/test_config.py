@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import unquote, urlsplit
+
 import pytest
 from pydantic import ValidationError
 
@@ -55,3 +57,22 @@ def test_mcp_port_range() -> None:
         Settings(stub_mode=True, mcp_port=0)
     with pytest.raises(ValidationError):
         Settings(stub_mode=True, mcp_port=70000)
+
+
+def test_pg_dsn_percent_encodes_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """asyncpg parses the DSN as a URL, so ``@ / : # ?`` in a password must be
+    encoded or the host, password and database all land in the wrong fields."""
+    for var in ("PG_USER", "PG_PASSWORD", "PG_HOST", "PG_PORT", "PG_DB"):
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings(stub_mode=True, pg_user="ph@sh", pg_password="p@ss/w:rd#1?")
+
+    parts = urlsplit(settings.pg_dsn)
+
+    assert parts.scheme == "postgresql"
+    assert parts.hostname == "postgres"
+    assert parts.port == 5432
+    assert parts.path == "/phish"
+    assert parts.username is not None and unquote(parts.username) == "ph@sh"
+    assert parts.password is not None and unquote(parts.password) == "p@ss/w:rd#1?"
+    # The raw secret never appears unencoded in the DSN.
+    assert "p@ss/w:rd#1?" not in settings.pg_dsn

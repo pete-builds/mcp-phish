@@ -865,3 +865,32 @@ async def test_config_exposes_hot_window_ttl_default() -> None:
     s = Settings(stub_mode=True)
     assert s.hot_window_cache_ttl_seconds == 90
     assert s.safe_repr()["hot_window_cache_ttl_seconds"] == 90
+
+
+@pytest.mark.asyncio
+async def test_health_reachable_is_measured_not_assumed(stub_settings: Settings) -> None:
+    """``reachable`` used to be the literal ``True`` for both upstreams."""
+    from mcp_phish.clients.stubs import StubPhishInClient, StubPhishNetClient
+
+    phishnet = StubPhishNetClient()
+    phishnet.last_success_ts = 100.0
+    phishnet.last_failure_ts = 200.0  # most recent call failed
+    phishnet.last_error = "phish.net GET shows returned 503: down"
+    phishin = StubPhishInClient()
+    phishin.last_failure_ts = 100.0
+    phishin.last_success_ts = 200.0  # recovered since
+
+    server = _build(stub_settings, phishnet_client=phishnet, phishin_client=phishin)
+    health = Health(**(await _call(server, "health"))["data"])
+
+    assert health.phishnet.reachable is False
+    assert health.phishnet.last_error == "phish.net GET shows returned 503: down"
+    assert health.phishin.reachable is True
+    assert health.phishin.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_health_never_called_upstream_counts_as_reachable(server: Any) -> None:
+    health = Health(**(await _call(server, "health"))["data"])
+    assert health.phishnet.reachable is True
+    assert health.phishin.reachable is True

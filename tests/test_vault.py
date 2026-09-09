@@ -14,13 +14,13 @@ Tests focus on the contract of ``VaultReader``, not the postgres dialect.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from mcp_phish.vault import VaultReader, _is_date
+from mcp_phish.vault import VaultReader, _as_date, _is_date
 
 # ---------------------------------------------------------------------------
 # Tiny fake-pool plumbing
@@ -65,6 +65,40 @@ def reader(fake_conn: _FakeConn) -> VaultReader:
 # ---------------------------------------------------------------------------
 
 
+def test_as_date_coerces_strings_and_passes_dates_through() -> None:
+    assert _as_date("1997-11-17") == date(1997, 11, 17)
+    real = date(1997, 11, 17)
+    assert _as_date(real) is real
+
+
+@pytest.mark.asyncio
+async def test_every_date_typed_parameter_is_a_date_object(
+    reader: VaultReader, fake_conn: _FakeConn
+) -> None:
+    """Sweep every ``$n::date`` read: no call may hand asyncpg a string.
+
+    The by-id branch of get_show and get_audio is included because it feeds
+    the row's own date back into a second ``::date`` query.
+    """
+    fake_conn.fetchrow.return_value = {"date": date(1997, 11, 17), "show_id_phishin": 1234}
+    fake_conn.fetch.return_value = []
+
+    await reader.get_show("1997-11-17")
+    await reader.get_show("1234")
+    await reader.get_reviews("1997-11-17")
+    await reader.get_audio("1997-11-17")
+    await reader.get_audio("1234")
+
+    date_typed_calls = [
+        call.args
+        for call in (*fake_conn.fetchrow.await_args_list, *fake_conn.fetch.await_args_list)
+        if "::date" in call.args[0]
+    ]
+    assert len(date_typed_calls) == 7
+    for args in date_typed_calls:
+        assert type(args[1]) is date, args
+
+
 def test_is_date_recognises_iso_only() -> None:
     assert _is_date("1995-12-30") is True
     assert _is_date("99-12-30") is False
@@ -95,11 +129,14 @@ async def test_get_show_by_date_executes_date_branch(
     assert fake_conn.fetchrow.await_args is not None
     sql_text = fake_conn.fetchrow.await_args.args[0]
     assert "s.date = $1::date" in sql_text
-    assert fake_conn.fetchrow.await_args.args[1] == "1995-12-30"
+    # asyncpg encodes a ::date parameter via .toordinal(), so the argument must
+    # be a real date object; a string raises DataError before Postgres sees it.
+    assert fake_conn.fetchrow.await_args.args[1] == date(1995, 12, 30)
     # Setlist lookup runs against setlist_notes for the same date.
     assert fake_conn.fetch.await_args is not None
     setlist_sql = fake_conn.fetch.await_args.args[0]
     assert "FROM   setlist_notes sn" in setlist_sql
+    assert fake_conn.fetch.await_args.args[1] == date(1995, 12, 30)
 
 
 @pytest.mark.asyncio
@@ -299,7 +336,7 @@ async def test_get_reviews_filters_by_date(reader: VaultReader, fake_conn: _Fake
     await reader.get_reviews("1995-12-30", limit=3)
     sql_text, date_arg, limit_arg = fake_conn.fetch.await_args.args
     assert "WHERE  show_date = $1::date" in sql_text
-    assert date_arg == "1995-12-30"
+    assert date_arg == date(1995, 12, 30)
     assert limit_arg == 3
 
 
@@ -317,10 +354,12 @@ async def test_get_audio_by_date_pulls_tracks(reader: VaultReader, fake_conn: _F
 
     assert show == {"date": "1997-11-17"}
     assert tracks == [{"id": 1, "show_date": "1997-11-17"}]
-    show_sql = fake_conn.fetchrow.await_args.args[0]
+    show_sql, show_arg = fake_conn.fetchrow.await_args.args
     assert "s.date = $1::date" in show_sql
-    tracks_sql = fake_conn.fetch.await_args.args[0]
+    assert show_arg == date(1997, 11, 17)
+    tracks_sql, tracks_arg = fake_conn.fetch.await_args.args
     assert "FROM   tracks" in tracks_sql
+    assert tracks_arg == date(1997, 11, 17)
 
 
 @pytest.mark.asyncio

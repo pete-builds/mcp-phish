@@ -223,6 +223,7 @@ class UpstreamHealth(BaseModel):
     rps_limit: float
     tokens_available: float
     last_call_ts: str | None = None  # ISO 8601
+    last_error: str | None = None  # set when the most recent call failed
 
 
 class CacheHealth(BaseModel):

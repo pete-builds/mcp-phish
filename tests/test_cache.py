@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import aiosqlite
 import pytest
 
 from mcp_phish.cache import ResponseCache, _hash_params
@@ -97,3 +98,66 @@ async def test_replace_on_duplicate_key(empty_cache: ResponseCache) -> None:
     await empty_cache.put("ep", {"k": "v"}, {"v": 1})
     await empty_cache.put("ep", {"k": "v"}, {"v": 2})
     assert await empty_cache.get("ep", {"k": "v"}) == {"v": 2}
+
+
+# ---------------------------------------------------------------------------
+# eviction
+# ---------------------------------------------------------------------------
+
+
+async def _plant_expired_row(db_path: str, key: str = "stale") -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO cache (endpoint, params_hash, raw_json, fetched_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("ep", key, "{}", 0),
+        )
+        await db.commit()
+
+
+async def _row_count(db_path: str) -> int:
+    async with aiosqlite.connect(db_path) as db, db.execute("SELECT COUNT(*) FROM cache") as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+@pytest.mark.asyncio
+async def test_evict_expired_deletes_only_stale_rows(temp_cache_path: str) -> None:
+    cache = ResponseCache(db_path=temp_cache_path, ttl_seconds=60)
+    await cache.init()
+    await cache.put("ep", {"k": "fresh"}, {"v": 1})
+    await _plant_expired_row(temp_cache_path)
+    assert await _row_count(temp_cache_path) == 2
+
+    assert await cache.evict_expired() == 1
+
+    assert await _row_count(temp_cache_path) == 1
+    assert await cache.get("ep", {"k": "fresh"}) == {"v": 1}
+
+
+@pytest.mark.asyncio
+async def test_init_sweeps_expired_rows(temp_cache_path: str) -> None:
+    first = ResponseCache(db_path=temp_cache_path, ttl_seconds=60)
+    await first.init()
+    await _plant_expired_row(temp_cache_path)
+    assert await _row_count(temp_cache_path) == 1
+
+    await ResponseCache(db_path=temp_cache_path, ttl_seconds=60).init()
+
+    assert await _row_count(temp_cache_path) == 0
+
+
+@pytest.mark.asyncio
+async def test_put_sweeps_every_n_writes(temp_cache_path: str) -> None:
+    cache = ResponseCache(db_path=temp_cache_path, ttl_seconds=60, evict_every=2)
+    await cache.init()
+    await _plant_expired_row(temp_cache_path)
+
+    await cache.put("ep", {"k": "one"}, {"v": 1})
+    assert await _row_count(temp_cache_path) == 2, "first write must not sweep yet"
+
+    await cache.put("ep", {"k": "two"}, {"v": 2})
+    assert await _row_count(temp_cache_path) == 2, "second write sweeps the stale row"
+    assert await cache.get("ep", {"k": "one"}) == {"v": 1}
+    assert await cache.get("ep", {"k": "two"}) == {"v": 2}

@@ -75,6 +75,10 @@ __all__ = [
 
 
 class PhishNetLike(Protocol):
+    last_success_ts: float | None
+    last_failure_ts: float | None
+    last_error: str | None
+
     async def get_show_by_date(self, date: str) -> Any: ...
     async def get_show_by_id(self, show_id: str) -> Any: ...
     async def search_shows(self, params: dict[str, Any]) -> Any: ...
@@ -90,6 +94,10 @@ class PhishNetLike(Protocol):
 
 
 class PhishInLike(Protocol):
+    last_success_ts: float | None
+    last_failure_ts: float | None
+    last_error: str | None
+
     async def get_show(self, date_or_id: str) -> Any: ...
     async def get_track(self, track_id: int) -> Any: ...
     async def search_tracks(self, params: dict[str, Any]) -> Any: ...
@@ -297,6 +305,16 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
                 return None
             return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
+        def _reachable(client: PhishNetLike | PhishInLike) -> bool:
+            # Measured, not assumed: unreachable only when the most recent
+            # call failed. Never called yet counts as reachable, since there
+            # is no evidence either way.
+            if client.last_failure_ts is None:
+                return True
+            if client.last_success_ts is None:
+                return False
+            return client.last_success_ts > client.last_failure_ts
+
         settings = ctx.settings
 
         # Touch the cache so size_bytes is honest after the first call.
@@ -346,16 +364,18 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
             stub_mode=settings.stub_mode,
             version=__version__,
             phishnet=UpstreamHealth(
-                reachable=True,
+                reachable=_reachable(ctx.phishnet),
                 rps_limit=pn_snap.rps,
                 tokens_available=pn_snap.tokens_available,
                 last_call_ts=_iso(pn_snap.last_call_ts),
+                last_error=ctx.phishnet.last_error,
             ),
             phishin=UpstreamHealth(
-                reachable=True,
+                reachable=_reachable(ctx.phishin),
                 rps_limit=pi_snap.rps,
                 tokens_available=pi_snap.tokens_available,
                 last_call_ts=_iso(pi_snap.last_call_ts),
+                last_error=ctx.phishin.last_error,
             ),
             cache=CacheHealth(
                 path=settings.cache_db_path,
