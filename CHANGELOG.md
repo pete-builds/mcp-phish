@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-09
+
 ### Fixed
 
 - **Date-keyed vault reads never read the vault.** `get_show`, `get_reviews`
