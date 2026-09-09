@@ -208,3 +208,53 @@ async def test_phishin_sends_bearer_token_when_key_present() -> None:
         assert auth == "Bearer topkey"
     finally:
         await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# last-outcome bookkeeping, read by health()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_phishnet_records_failure_then_success() -> None:
+    route = respx.get("https://api.phish.test/v5/songs.json")
+    route.mock(return_value=httpx.Response(503, text="down"))
+    client = PhishNetClient(
+        api_key="k", throttle=TokenBucket(rps=50), base_url="https://api.phish.test/v5"
+    )
+    try:
+        assert client.last_failure_ts is None and client.last_success_ts is None
+        with pytest.raises(PhishNetError):
+            await client.list_songs()
+        assert client.last_failure_ts is not None
+        assert client.last_success_ts is None
+        assert client.last_error is not None and "503" in client.last_error
+
+        route.mock(return_value=httpx.Response(200, json={"data": []}))
+        await client.list_songs()
+        assert client.last_success_ts is not None
+        assert client.last_success_ts >= client.last_failure_ts
+        assert client.last_error is None
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_phishin_records_failure_then_success() -> None:
+    route = respx.get("https://phish.test/api/v2/shows/1997-11-17")
+    route.mock(return_value=httpx.Response(500, text="boom"))
+    client = PhishInClient(throttle=TokenBucket(rps=50), base_url="https://phish.test/api/v2")
+    try:
+        with pytest.raises(PhishInError):
+            await client.get_show("1997-11-17")
+        assert client.last_failure_ts is not None
+        assert client.last_error is not None and "500" in client.last_error
+
+        route.mock(return_value=httpx.Response(200, json={"date": "1997-11-17"}))
+        await client.get_show("1997-11-17")
+        assert client.last_success_ts is not None
+        assert client.last_error is None
+    finally:
+        await client.aclose()

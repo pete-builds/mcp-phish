@@ -14,6 +14,7 @@ lifecycle (create / close) is the caller's responsibility.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import Any
 
@@ -54,7 +55,7 @@ class VaultReader:
                     LEFT JOIN tours  t ON t.slug = s.tour_slug
                     WHERE  s.date = $1::date
                     """,
-                    date_or_id,
+                    _as_date(date_or_id),
                 )
             else:
                 # Try phish.in id (integer)
@@ -82,7 +83,7 @@ class VaultReader:
             if show_row is None:
                 return None, []
 
-            show_date = str(show_row["date"])
+            show_date = _as_date(show_row["date"])
             setlist_rows: list[asyncpg.Record] = await conn.fetch(
                 """
                 SELECT sn.set_label, sn.position, sn.song_slug,
@@ -313,7 +314,7 @@ class VaultReader:
                     ORDER  BY posted_at DESC NULLS LAST
                     LIMIT  $2
                     """,
-                    show_date,
+                    _as_date(show_date),
                     limit,
                 )
             )
@@ -337,7 +338,7 @@ class VaultReader:
                     LEFT JOIN venues v ON v.slug = s.venue_slug
                     WHERE  s.date = $1::date
                     """,
-                    show_date_or_id,
+                    _as_date(show_date_or_id),
                 )
             else:
                 try:
@@ -359,7 +360,7 @@ class VaultReader:
             if show_row is None:
                 return None, []
 
-            show_date = str(show_row["date"])
+            show_date = _as_date(show_row["date"])
             tracks: list[asyncpg.Record] = await conn.fetch(
                 """
                 SELECT id, show_date, slug, title, position, set_name,
@@ -601,3 +602,17 @@ class VaultReader:
 def _is_date(value: str) -> bool:
     """Return True if value looks like YYYY-MM-DD."""
     return len(value) == 10 and value.count("-") == 2
+
+
+def _as_date(value: object) -> dt.date:
+    """Coerce an ISO string or a date-like value to ``datetime.date``.
+
+    asyncpg encodes a ``$n::date`` parameter by calling ``.toordinal()`` on the
+    value, so a plain ``"1997-11-17"`` string never reaches Postgres: the driver
+    raises ``DataError`` first. Every date-keyed vault read used to pass the
+    string, fail, and fall back to the live API on every call. Rows coming back
+    from asyncpg are already ``date`` and pass through untouched.
+    """
+    if isinstance(value, dt.date):
+        return value
+    return dt.date.fromisoformat(str(value))

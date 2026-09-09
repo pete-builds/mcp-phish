@@ -8,6 +8,7 @@ needs to talk to api.phish.net. Stub mode requires no upstream credentials.
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -121,9 +122,16 @@ class Settings(BaseSettings):
 
     @property
     def pg_dsn(self) -> str:
-        """Build a PostgreSQL DSN from vault connection settings."""
-        pw = self.pg_password.get_secret_value()
-        return f"postgresql://{self.pg_user}:{pw}@{self.pg_host}:{self.pg_port}/{self.pg_db}"
+        """Build a PostgreSQL DSN from vault connection settings.
+
+        asyncpg parses the DSN as a URL, so user and password are percent-encoded
+        with nothing held back: a password containing ``@``, ``/``, ``:``, ``#``
+        or ``?`` would otherwise split the string in the wrong place and point
+        the pool at a host that does not exist.
+        """
+        user = quote(self.pg_user, safe="")
+        pw = quote(self.pg_password.get_secret_value(), safe="")
+        return f"postgresql://{user}:{pw}@{self.pg_host}:{self.pg_port}/{self.pg_db}"
 
     # ------------------------------------------------------------------
     # Validation

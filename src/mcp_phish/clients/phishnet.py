@@ -38,6 +38,7 @@ when a tool needs them.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -78,6 +79,11 @@ class PhishNetClient:
             headers={"Accept": "application/json"},
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
+        # Outcome of the most recent upstream call, read by health(). A failure
+        # newer than the last success means the upstream is not reachable.
+        self.last_success_ts: float | None = None
+        self.last_failure_ts: float | None = None
+        self.last_error: str | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -87,6 +93,18 @@ class PhishNetClient:
     # ------------------------------------------------------------------
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """GET with the outcome recorded for ``health()``."""
+        try:
+            result = await self._get_inner(path, params)
+        except PhishNetError as exc:
+            self.last_failure_ts = time.time()
+            self.last_error = str(exc)
+            raise
+        self.last_success_ts = time.time()
+        self.last_error = None
+        return result
+
+    async def _get_inner(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """GET ``<base>/<path>`` with apikey injected. Returns ``response.data``.
 
         Retries once on a transient connection error. Anything else surfaces

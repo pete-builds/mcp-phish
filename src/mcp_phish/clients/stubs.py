@@ -420,6 +420,9 @@ class StubPhishNetClient:
         self.api_key = "stub"
         self.base_url = "stub://phishnet"
         self._calls: int = 0  # how many fake calls have been made
+        self.last_success_ts: float | None = None
+        self.last_failure_ts: float | None = None
+        self.last_error: str | None = None
 
     async def aclose(self) -> None:
         return None
@@ -516,6 +519,9 @@ class StubPhishInClient:
         self.api_key = ""
         self.base_url = "stub://phishin"
         self._calls: int = 0
+        self.last_success_ts: float | None = None
+        self.last_failure_ts: float | None = None
+        self.last_error: str | None = None
 
     async def aclose(self) -> None:
         return None

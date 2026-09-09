@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Date-keyed vault reads never read the vault.** `get_show`, `get_reviews`
+  and `get_audio` passed the date as a plain string into a `$1::date`
+  parameter; asyncpg raises `DataError` before Postgres sees the query, and
+  every caller swallowed it and fell back to the live API with a traceback in
+  the log on each call. Dates are now coerced to `datetime.date` before every
+  date-typed parameter, and the fake-pool tests assert the parameter type.
+- **Postgres DSN was not URL-encoded.** A password containing `@`, `/`, `:`,
+  `#` or `?` split the DSN in the wrong place and pointed the pool at a host
+  that does not exist, after which the vault silently disappeared. User and
+  password are percent-encoded now.
+- **`health()` reported both upstreams as `reachable: true` unconditionally.**
+  Each client records the outcome of its most recent call; `reachable` is
+  false when the latest call failed, and the new `last_error` field carries
+  the message.
+- **The response cache never evicted anything.** Expired rows were filtered
+  on read and left on disk forever. `init()` now sweeps once and `put()`
+  sweeps every 100 writes; `evict_expired()` is public for callers that want
+  it sooner.
+
 ## [0.2.1] - 2026-08-16
 
 ### Fixed

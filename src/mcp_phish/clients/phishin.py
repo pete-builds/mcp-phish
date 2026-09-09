@@ -14,6 +14,7 @@ contract happens in ``server.py``.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -56,6 +57,11 @@ class PhishInClient:
             headers=headers,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
+        # Outcome of the most recent upstream call, read by health(). A failure
+        # newer than the last success means the upstream is not reachable.
+        self.last_success_ts: float | None = None
+        self.last_failure_ts: float | None = None
+        self.last_error: str | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -65,6 +71,18 @@ class PhishInClient:
     # ------------------------------------------------------------------
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        """GET with the outcome recorded for ``health()``."""
+        try:
+            result = await self._get_inner(path, params)
+        except PhishInError as exc:
+            self.last_failure_ts = time.time()
+            self.last_error = str(exc)
+            raise
+        self.last_success_ts = time.time()
+        self.last_error = None
+        return result
+
+    async def _get_inner(self, path: str, params: dict[str, Any] | None = None) -> Any:
         await self._throttle.acquire()
         url = f"{self.base_url}/{path.lstrip('/')}"
         last_exc: Exception | None = None

@@ -14,8 +14,9 @@ CREATE TABLE IF NOT EXISTS cache (
 
 This is *not* a vault embryo. The Phase 2 Postgres vault is a separate,
 normalized store with its own schema. This cache only exists to keep us under
-the upstream rate limits. A single TTL governs every entry. Eviction is
-opportunistic on read; nothing background-runs.
+the upstream rate limits. A single TTL governs every entry. Expired rows are
+filtered on read and deleted on write: ``init()`` sweeps once, and ``put()``
+sweeps every ``evict_every`` writes. Nothing background-runs.
 """
 
 from __future__ import annotations
@@ -47,11 +48,13 @@ class ResponseCache:
     without an extra round-trip to the database.
     """
 
-    def __init__(self, db_path: str, ttl_seconds: int) -> None:
+    def __init__(self, db_path: str, ttl_seconds: int, evict_every: int = 100) -> None:
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
+        self.evict_every = max(1, evict_every)
         self.last_hit_ts: float | None = None
         self.last_miss_ts: float | None = None
+        self._writes_since_evict = 0
 
     async def init(self) -> None:
         """Create the parent dir + table on first use. Safe to call repeatedly."""
@@ -71,6 +74,23 @@ class ResponseCache:
                 """
             )
             await db.commit()
+        await self.evict_expired()
+
+    async def evict_expired(self) -> int:
+        """Delete every row older than the TTL. Returns the number deleted.
+
+        Reads already ignore expired rows, so this only reclaims disk: without
+        it, every distinct query ever made stays in the file forever.
+        """
+        cutoff = int(time.time()) - self.ttl_seconds
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("DELETE FROM cache WHERE fetched_at < ?", (cutoff,))
+            await db.commit()
+            deleted = int(cursor.rowcount)
+        self._writes_since_evict = 0
+        if deleted:
+            logger.debug("cache evicted expired rows", extra={"deleted": deleted})
+        return deleted
 
     async def get(
         self,
@@ -121,6 +141,9 @@ class ResponseCache:
                 (endpoint, params_hash, raw_json, int(time.time())),
             )
             await db.commit()
+        self._writes_since_evict += 1
+        if self._writes_since_evict >= self.evict_every:
+            await self.evict_expired()
 
     def size_bytes(self) -> int:
         """Best-effort current DB file size. Returns 0 if the file isn't there yet."""
