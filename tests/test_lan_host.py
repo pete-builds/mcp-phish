@@ -20,6 +20,12 @@ The control boots the same entrypoint the loopback way and requires a 421.
 It runs on every CI run, so a probe that silently stopped detecting the 421
 (wrong header, wrong path, a server that never started) fails here instead of
 reading as a pass.
+
+The same harness checks session reaping. FastMCP 4 hands the SDK's session
+manager its own idle-timeout setting, which defaults to never, so abandoned
+sessions would pile up silently. ``main()`` restores 30 minutes; the tests
+read the value off the live session manager and prove an operator override
+reaches a running server.
 """
 
 from __future__ import annotations
@@ -34,6 +40,12 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+import fastmcp
+import pytest
+import uvicorn
+
+from mcp_phish import server as server_module
 
 LAN_HOST = "192.168.86.20:3705"
 
@@ -103,24 +115,30 @@ def _server(tmp_path: Path, **overrides: str) -> Iterator[int]:
             proc.wait()
 
 
-def _post_initialize(port: int, host_header: str) -> tuple[int, str]:
+def _post(
+    port: int, host_header: str, body: dict[str, object], session_id: str | None = None
+) -> tuple[int, str, str | None]:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    headers = {
+        "Host": host_header,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if session_id:
+        headers["mcp-session-id"] = session_id
     try:
-        conn.request(
-            "POST",
-            "/mcp",
-            body=json.dumps(INITIALIZE),
-            headers={
-                "Host": host_header,
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            },
-        )
+        conn.request("POST", "/mcp", body=json.dumps(body), headers=headers)
         resp = conn.getresponse()
         # Enough to see the JSON-RPC result line; an SSE body may stay open.
-        return resp.status, resp.read1(4096).decode(errors="replace")
+        text = resp.read1(4096).decode(errors="replace")
+        return resp.status, text, resp.getheader("mcp-session-id")
     finally:
         conn.close()
+
+
+def _post_initialize(port: int, host_header: str) -> tuple[int, str]:
+    status, body, _ = _post(port, host_header, INITIALIZE)
+    return status, body
 
 
 def test_lan_host_header_is_served(tmp_path: Path) -> None:
@@ -140,3 +158,75 @@ def test_control_loopback_build_refuses_lan_host(tmp_path: Path) -> None:
     assert status == 421, f"control expected 421, got {status}: {body!r}"
     # The guard, not a dead server: the same server still answers its own name.
     assert loopback_status == 200
+
+
+# --- Session reaping -------------------------------------------------------
+
+
+@pytest.fixture
+def main_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run ``main()`` in-process: stub mode, no banner, no PyPI, settings restored."""
+    for var in [k for k in os.environ if k.startswith(("FASTMCP_", "MCP_"))]:
+        monkeypatch.delenv(var)
+    monkeypatch.chdir(tmp_path)  # keep a developer's .env out of it
+    monkeypatch.setenv("STUB_MODE", "true")
+    monkeypatch.setenv("CACHE_DB_PATH", str(tmp_path / "cache.db"))
+    monkeypatch.setattr(server_module, "configure_logging", lambda **_: None)
+    monkeypatch.setattr(fastmcp.settings, "show_server_banner", False)
+    monkeypatch.setattr(fastmcp.settings, "check_for_updates", "off")
+    # FastMCP 4's own default. monkeypatch puts it back after main() changes it.
+    monkeypatch.setattr(fastmcp.settings, "http_session_idle_timeout", None)
+
+
+def _live_session_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> float | None:
+    """Run the real ``main()`` and read the timeout off the live session manager.
+
+    uvicorn's ``serve()`` is swapped for a probe that starts the app's lifespan
+    (where FastMCP builds the session manager) and reads it, then returns.
+    """
+    seen: dict[str, float | None] = {}
+
+    async def probe(self: uvicorn.Server, sockets: object = None) -> None:
+        app = self.config.app
+        async with app.router.lifespan_context(app):
+            for route in app.routes:
+                manager = getattr(getattr(route, "endpoint", None), "session_manager", None)
+                if manager is not None:
+                    seen["timeout"] = manager.session_idle_timeout
+
+    monkeypatch.setattr(uvicorn.Server, "serve", probe)
+    server_module.main()
+    assert "timeout" in seen, "no streamable-HTTP session manager found on the app"
+    return seen["timeout"]
+
+
+@pytest.mark.usefixtures("main_env")
+def test_main_reaps_idle_sessions_after_30_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _live_session_idle_timeout(monkeypatch) == 1800
+
+
+@pytest.mark.usefixtures("main_env")
+def test_operator_idle_timeout_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # FastMCP reads the env var into its settings at import; mirror both halves.
+    monkeypatch.setenv("FASTMCP_HTTP_SESSION_IDLE_TIMEOUT", "120")
+    monkeypatch.setattr(fastmcp.settings, "http_session_idle_timeout", 120.0)
+    assert _live_session_idle_timeout(monkeypatch) == 120
+
+
+def _session_survives(port: int, wait: float) -> int:
+    """Open a session, go idle for ``wait`` seconds, then use it. Returns the status."""
+    status, body, session_id = _post(port, LAN_HOST, INITIALIZE)
+    assert status == 200 and session_id, (status, body)
+    note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    assert _post(port, LAN_HOST, note, session_id)[0] == 202
+    time.sleep(wait)
+    listing = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+    return _post(port, LAN_HOST, listing, session_id)[0]
+
+
+def test_idle_timeout_override_reaches_the_running_server(tmp_path: Path) -> None:
+    """A 1 second override reaps a real session; the default keeps it (control)."""
+    with _server(tmp_path, FASTMCP_HTTP_SESSION_IDLE_TIMEOUT="1") as port:
+        assert _session_survives(port, wait=3) == 404
+    with _server(tmp_path) as port:
+        assert _session_survives(port, wait=3) == 200
