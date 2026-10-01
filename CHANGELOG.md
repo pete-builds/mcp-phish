@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **FastMCP 4.0.10 on MCP Python SDK 2.2.0** (from FastMCP 3.4.7 on SDK
+  1.28.1). The tool surface, its wire annotations and the `/health` route are
+  unchanged. Annotation reads in tests moved to the SDK v2 snake_case names,
+  and any FastMCP deprecation warning now fails the suite.
+- The image sets `FASTMCP_CHECK_FOR_UPDATES=off`, so the server no longer asks
+  pypi.org for FastMCP's latest version on every start.
+
+### Added
+
+- `tests/test_lan_host.py` boots the real entrypoint and requires an MCP
+  `initialize` sent with a LAN `Host` header to be answered, with a control
+  that requires the loopback-guarded build of the same server to answer 421.
+
 ## [0.2.2] - 2026-09-09
 
 ### Fixed
