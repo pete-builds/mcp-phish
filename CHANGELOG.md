@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **FastMCP 4.0.10 on MCP Python SDK 2.2.0** (from FastMCP 3.4.7 on SDK
+  1.28.1). The tool surface, its wire annotations and the `/health` route are
+  unchanged. Annotation reads in tests moved to the SDK v2 snake_case names,
+  and any FastMCP deprecation warning now fails the suite.
+- The image sets `FASTMCP_CHECK_FOR_UPDATES=off`, so the server no longer asks
+  pypi.org for FastMCP's latest version on every start.
+
+### Fixed
+
+- **Abandoned MCP sessions were never reaped.** Measured on the live session
+  manager: `session_idle_timeout` was None on `main` (the `mcp==1.28.1` pin
+  predates the SDK's 1800 second default) and stays None under FastMCP 4,
+  which passes its own setting, default None, to the SDK. `main()` now sets
+  1800 seconds unless `FASTMCP_HTTP_SESSION_IDLE_TIMEOUT` is set, in which case
+  the operator's value wins.
+
+### Added
+
+- `tests/test_lan_host.py` boots the real entrypoint and requires an MCP
+  `initialize` sent with a LAN `Host` header to be answered, with a control
+  that requires the loopback-guarded build of the same server to answer 421.
+  It also reads the idle timeout off the live session manager (1800 by
+  default, an operator value left alone) and proves a 1 second override reaps
+  a real session on a running server while the default keeps it.
+
 ## [0.2.2] - 2026-09-09
 
 ### Fixed

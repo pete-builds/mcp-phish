@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "fastmcp==3.4.7",
+    "fastmcp==4.0.10",
     "httpx==0.28.1",
     "uvicorn==0.53.0",
     "python-dotenv==1.2.3",
@@ -74,6 +74,12 @@ addopts = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# MCP SDK v2 renamed protocol fields to snake_case and FastMCP 4 keeps the old
+# camelCase reads alive through a deprecation bridge slated for removal. Fail
+# on any use of it now, while the fix is a rename, not after it disappears.
+filterwarnings = [
+    "error::fastmcp.FastMCPDeprecationWarning",
+]
 markers = [
     "eval: end-to-end tool fixture replays (run with `pytest -k eval`)",
 ]
