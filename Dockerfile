@@ -20,7 +20,7 @@
 # asserts the built image's Python minor version (see the build-image job in
 # .github/workflows/ci.yml), so that failure mode is loud rather than silent.
 # If Dependabot proposes a FROM line whose tag is not 3.13, close the PR.
-FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS builder
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS builder
 
 WORKDIR /build
 
@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir --target /wheels --no-deps .
 # Runtime stage: slim image with only the installed package + UID 1000 user.
 # ---------------------------------------------------------------------------
 # Same pin as the builder stage. Keep both stages on the identical tag+digest.
-FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS runtime
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS runtime
 
 # FASTMCP_CHECK_FOR_UPDATES=off: FastMCP 4 asks pypi.org for its latest version
 # on every start (the startup banner's update check). Nothing in the container
