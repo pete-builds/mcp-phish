@@ -75,6 +75,8 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
         Returns:
             JSON ``{"data": Song}``. Song fields: slug, title, artist,
             original, times_played, debut_date, last_played_date, gap.
+
+        Idempotent. Example: ``get_song("fluffhead")``.
         """
         if not slug:
             return err("slug is required", "INVALID_INPUT")
