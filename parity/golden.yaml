@@ -1,0 +1,37 @@
+# Golden set for the release parity check (.github/workflows/parity.yml).
+#
+# Every run compares tools/list between the last release and this change.
+# The calls below add behavior parity. They are safe in CI because parity.env
+# sets STUB_MODE=true: each answer comes from the server's built-in mock data,
+# with no call to phish.net, phish.in or the vault database. All are read-only
+# and deterministic, so nothing is normalized.
+#
+# Not covered: stats_overview (vault only, answers VAULT_DISABLED here), and
+# the remaining tools, which are covered by tools/list parity only.
+
+calls:
+  - id: search-songs-fluff
+    tool: search_songs
+    arguments:
+      query: fluff
+      limit: 5
+    read_only: true
+  - id: get-song-fluffhead
+    tool: get_song
+    arguments:
+      slug: fluffhead
+    read_only: true
+  - id: get-show-1995-12-30
+    tool: get_show
+    arguments:
+      date_or_id: "1995-12-30"
+    read_only: true
+  - id: search-shows-1997
+    tool: search_shows
+    arguments:
+      year: 1997
+      limit: 5
+    read_only: true
+
+normalize:
+  keys: []

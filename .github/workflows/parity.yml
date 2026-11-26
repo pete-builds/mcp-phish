@@ -1,0 +1,28 @@
+name: Parity
+
+# Release parity: starts the last released image of this server from GHCR and a
+# candidate built from this change, side by side, and compares what an MCP
+# client sees from each: the tool list, every tool's full description and input
+# schema, and the answers to the golden calls in parity/golden.yaml. Any
+# difference fails unless parity/expected.yaml declares it with a reason.
+#
+# The runner lives in pete-mcp-template and is pinned to a full commit SHA.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: Release parity
+    permissions:
+      contents: read
+      packages: read
+    uses: pete-builds/pete-mcp-template/.github/workflows/mcp-parity.yml@576f8e328fc9d0e954e8e3574f3651c3d9ef5c4f
+    with:
+      image: ghcr.io/pete-builds/mcp-phish
+      port: 3705
+      env-file: parity/parity.env
