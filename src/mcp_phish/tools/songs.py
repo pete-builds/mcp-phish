@@ -67,7 +67,7 @@ def register(mcp: FastMCP, ctx: ServerContext) -> None:
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_song(slug: str) -> str:
-        """Get a single song's catalog record (debut, last play, gap, total).
+        """Get a single song's catalog record (debut, last
 
         Args:
             slug: phish.net song slug (e.g. ``"fluffhead"``, ``"mikes-song"``).
