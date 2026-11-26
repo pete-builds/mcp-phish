@@ -3,13 +3,63 @@
 # When a change is MEANT to alter what a client sees (a new tool, a reworded
 # description, a renamed argument, a different answer to a golden call), the
 # parity check fails and its summary lists each difference by path. Add an entry
-# here with the release it differs from and one plain-English reason, e.g.:
+# here with the release it differs from and one plain-English reason. An entry
+# only applies while the baseline is the release it names, so after the next
+# release these stop applying and can be deleted.
 #
-# changes:
-#   - change: tools.get_song.inputSchema.properties
-#     baseline: 0.2.2
-#     reason: Renamed the slug argument.
-#
-# Nothing is intended at the moment, so the list is empty.
+# Release 0.2.2 shipped FastMCP 3.4.7. Main now runs FastMCP 4.2.0 (with mcp
+# 2.3.0). No tool body or docstring changed; the framework upgrade alone changes
+# what a client sees, which this check surfaced on its first run.
 
-changes: []
+changes:
+  - change: tools.get_audio.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.get_reviews.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.get_show.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.get_song.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.get_track.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.health.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.jam_chart.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.recent_shows.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.search_audio_tracks.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.search_shows.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.search_songs.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.song_history.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.songs_by_gap.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.stats_overview.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.validate_song_slugs.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.venue_history.title
+    baseline: 0.2.2
+    reason: FastMCP 4 derives a display title from the tool name; FastMCP 3.4.7 sent none.
+  - change: tools.health.description
+    baseline: 0.2.2
+    reason: FastMCP 4 renders the health tool's unchanged docstring with different text than FastMCP 3.4.7.
