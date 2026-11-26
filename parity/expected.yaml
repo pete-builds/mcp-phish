@@ -1,0 +1,15 @@
+# Intended differences from the last release, for the release parity check.
+#
+# When a change is MEANT to alter what a client sees (a new tool, a reworded
+# description, a renamed argument, a different answer to a golden call), the
+# parity check fails and its summary lists each difference by path. Add an entry
+# here with the release it differs from and one plain-English reason, e.g.:
+#
+# changes:
+#   - change: tools.get_song.inputSchema.properties
+#     baseline: 0.2.2
+#     reason: Renamed the slug argument.
+#
+# Nothing is intended at the moment, so the list is empty.
+
+changes: []
